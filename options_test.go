@@ -1,0 +1,221 @@
+package storage_test
+
+import (
+	"testing"
+
+	"github.com/firetiger-oss/storage"
+)
+
+func TestGetOptions(t *testing.T) {
+	tests := []struct {
+		scenario   string
+		options    []storage.GetOption
+		start, end int64
+		hasRange   bool
+	}{
+		{
+			scenario: "empty",
+			options:  []storage.GetOption{},
+		},
+
+		{
+			scenario: "byte range",
+			options: []storage.GetOption{
+				storage.BytesRange(1, 99),
+			},
+			start:    1,
+			end:      99,
+			hasRange: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.scenario, func(t *testing.T) {
+			options := storage.NewGetOptions(test.options...)
+
+			if start, end, ok := options.BytesRange(); !ok {
+				if test.hasRange {
+					t.Error("expected range to be set")
+				}
+			} else {
+				if !test.hasRange {
+					t.Error("expected range to be empty")
+				}
+				if start != test.start {
+					t.Errorf("unexpected start: %d != %d", start, test.start)
+				}
+				if end != test.end {
+					t.Errorf("unexpected end: %d != %d", end, test.end)
+				}
+			}
+		})
+	}
+}
+
+func TestPutOptions(t *testing.T) {
+	tests := []struct {
+		scenario        string
+		options         []storage.PutOption
+		contentType     string
+		contentEncoding string
+		cacheControl    string
+		ifMatch         string
+		ifNoneMatch     string
+		metadata        map[string]string
+	}{
+		{
+			scenario:    "empty",
+			options:     []storage.PutOption{},
+			contentType: "application/octet-stream",
+		},
+
+		{
+			scenario: "content type",
+			options: []storage.PutOption{
+				storage.ContentType("text/plain"),
+			},
+			contentType: "text/plain",
+		},
+
+		{
+			scenario: "content encoding",
+			options: []storage.PutOption{
+				storage.ContentEncoding("gzip"),
+			},
+			contentType:     "application/octet-stream",
+			contentEncoding: "gzip",
+		},
+
+		{
+			scenario: "cache control",
+			options: []storage.PutOption{
+				storage.CacheControl("max-age=3600"),
+			},
+			contentType:  "application/octet-stream",
+			cacheControl: "max-age=3600",
+		},
+
+		{
+			scenario: "if-match",
+			options: []storage.PutOption{
+				storage.IfMatch("etag-1"),
+			},
+			contentType: "application/octet-stream",
+			ifMatch:     "etag-1",
+		},
+
+		{
+			scenario: "if-none-match",
+			options: []storage.PutOption{
+				storage.IfNoneMatch("etag-2"),
+			},
+			contentType: "application/octet-stream",
+			ifNoneMatch: "etag-2",
+		},
+
+		{
+			scenario: "metadata",
+			options: []storage.PutOption{
+				storage.Metadata("hello", "world"),
+				storage.Metadata("answer", "42"),
+			},
+			contentType: "application/octet-stream",
+			metadata: map[string]string{
+				"hello":  "world",
+				"answer": "42",
+			},
+		},
+
+		{
+			scenario: "multiple options",
+			options: []storage.PutOption{
+				storage.ContentType("text/plain"),
+				storage.CacheControl("public, max-age=86400"),
+				storage.ContentEncoding("gzip"),
+			},
+			contentType:     "text/plain",
+			cacheControl:    "public, max-age=86400",
+			contentEncoding: "gzip",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.scenario, func(t *testing.T) {
+			options := storage.NewPutOptions(test.options...)
+
+			if contentType := options.ContentType(); contentType != test.contentType {
+				t.Errorf("unexpected content type: %q != %q", contentType, test.contentType)
+			}
+
+			if contentEncoding := options.ContentEncoding(); contentEncoding != test.contentEncoding {
+				t.Errorf("unexpected content encoding: %q != %q", contentEncoding, test.contentEncoding)
+			}
+
+			if cacheControl := options.CacheControl(); cacheControl != test.cacheControl {
+				t.Errorf("unexpected cache control: %q != %q", cacheControl, test.cacheControl)
+			}
+
+			if ifMatch := options.IfMatch(); ifMatch != test.ifMatch {
+				t.Errorf("unexpected if-match: %q != %q", ifMatch, test.ifMatch)
+			}
+
+			if ifNoneMatch := options.IfNoneMatch(); ifNoneMatch != test.ifNoneMatch {
+				t.Errorf("unexpected if-not-match: %q != %q", ifNoneMatch, test.ifNoneMatch)
+			}
+		})
+	}
+}
+
+func TestListOptions(t *testing.T) {
+	tests := []struct {
+		scenario   string
+		options    []storage.ListOption
+		keyPrefix  string
+		startAfter string
+	}{
+		{
+			scenario: "empty",
+			options:  []storage.ListOption{},
+		},
+
+		{
+			scenario: "key prefix",
+			options: []storage.ListOption{
+				storage.KeyPrefix("prefix/"),
+			},
+			keyPrefix: "prefix/",
+		},
+
+		{
+			scenario: "start after",
+			options: []storage.ListOption{
+				storage.StartAfter("marker-key"),
+			},
+			startAfter: "marker-key",
+		},
+
+		{
+			scenario: "both options",
+			options: []storage.ListOption{
+				storage.KeyPrefix("prefix/"),
+				storage.StartAfter("marker-key"),
+			},
+			keyPrefix:  "prefix/",
+			startAfter: "marker-key",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.scenario, func(t *testing.T) {
+			options := storage.NewListOptions(test.options...)
+
+			if keyPrefix := options.KeyPrefix(); keyPrefix != test.keyPrefix {
+				t.Errorf("unexpected key prefix: %q != %q", keyPrefix, test.keyPrefix)
+			}
+
+			if startAfter := options.StartAfter(); startAfter != test.startAfter {
+				t.Errorf("unexpected start after: %q != %q", startAfter, test.startAfter)
+			}
+		})
+	}
+}

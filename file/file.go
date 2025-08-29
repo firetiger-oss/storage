@@ -1,0 +1,727 @@
+package file
+
+import (
+	"context"
+	"crypto/md5"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"io/fs"
+	"iter"
+	"os"
+	"path"
+	"path/filepath"
+	"slices"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/firetiger-oss/storage"
+	"github.com/firetiger-oss/storage/backoff"
+	"github.com/firetiger-oss/storage/internal/sequtil"
+	"github.com/fsnotify/fsnotify"
+	"golang.org/x/sys/unix"
+)
+
+const (
+	xattrCacheControl    = "user.storage.cache-control"
+	xattrContentType     = "user.storage.content-type"
+	xattrContentEncoding = "user.storage.content-encoding"
+	xattrETag            = "user.storage.etag"
+	xattrMetadata        = "user.storage.metadata"
+	tempFileSuffix       = ".C848CADBC89F4F129E6249F61F11C78B.tmp"
+	tempFilePattern      = ".*" + tempFileSuffix
+)
+
+func init() {
+	storage.Register("file", NewRegistry("/"))
+}
+
+func NewRegistry(workingDirectory string) storage.Registry {
+	return storage.RegistryFunc(func(ctx context.Context, bucket string) (storage.Bucket, error) {
+		if bucket != "" {
+			return nil, fmt.Errorf("file storage does not support bucket names (got %q)", bucket)
+		}
+		return NewBucket(workingDirectory), nil
+	})
+}
+
+func NewBucket(workingDirectory string) *Bucket {
+	return &Bucket{root: workingDirectory}
+}
+
+func bytesRangeReadCloser(f *os.File, start, end int64) io.ReadCloser {
+	return struct {
+		io.Reader
+		io.Closer
+	}{
+		Reader: io.NewSectionReader(f, start, (end+1)-start),
+		Closer: f,
+	}
+}
+
+type Bucket struct {
+	root string
+}
+
+func (b *Bucket) Location() string {
+	return "file:///"
+}
+
+func (b *Bucket) Access(ctx context.Context) error {
+	if err := context.Cause(ctx); err != nil {
+		return err
+	}
+	return b.stat()
+}
+
+func (b *Bucket) Create(ctx context.Context) error {
+	if err := context.Cause(ctx); err != nil {
+		return err
+	}
+	_, err := os.Stat(b.root)
+	if err == nil {
+		return storage.ErrBucketExist
+	}
+	return os.MkdirAll(b.root, 0777)
+}
+
+func (b *Bucket) HeadObject(ctx context.Context, key string) (storage.ObjectInfo, error) {
+	if err := context.Cause(ctx); err != nil {
+		return storage.ObjectInfo{}, err
+	}
+	if err := storage.ValidObjectKey(key); err != nil {
+		return storage.ObjectInfo{}, err
+	}
+	if err := b.stat(); err != nil {
+		return storage.ObjectInfo{}, err
+	}
+	f, err := os.Open(b.path(key))
+	if err != nil {
+		if isErrNotExist(err) {
+			err.(*os.PathError).Err = storage.ErrObjectNotFound
+		}
+		return storage.ObjectInfo{}, err
+	}
+	defer f.Close()
+	return readObjectInfo(f)
+}
+
+func (b *Bucket) GetObject(ctx context.Context, key string, options ...storage.GetOption) (io.ReadCloser, storage.ObjectInfo, error) {
+	if err := context.Cause(ctx); err != nil {
+		return nil, storage.ObjectInfo{}, err
+	}
+	if err := storage.ValidObjectKey(key); err != nil {
+		return nil, storage.ObjectInfo{}, err
+	}
+	if err := b.stat(); err != nil {
+		return nil, storage.ObjectInfo{}, err
+	}
+
+	f, err := os.Open(b.path(key))
+	if err != nil {
+		if isErrNotExist(err) {
+			err.(*os.PathError).Err = storage.ErrObjectNotFound
+		}
+		return nil, storage.ObjectInfo{}, err
+	}
+	closeFile := true
+	defer func() {
+		if closeFile {
+			f.Close()
+		}
+	}()
+
+	object, err := readObjectInfo(f)
+	if err != nil {
+		if errors.Is(err, syscall.EISDIR) {
+			err = storage.ErrObjectNotFound
+		}
+		return nil, storage.ObjectInfo{}, err
+	}
+
+	getOptions := storage.NewGetOptions(options...)
+	body := io.ReadCloser(f)
+	if start, end, ok := getOptions.BytesRange(); ok {
+		if err := storage.ValidObjectRange(key, start, end); err != nil {
+			return nil, storage.ObjectInfo{}, err
+		}
+		if _, err := f.Seek(start, io.SeekCurrent); err != nil {
+			return nil, storage.ObjectInfo{}, err
+		}
+		body = bytesRangeReadCloser(f, start, end)
+	}
+
+	closeFile = false
+	return body, object, nil
+}
+
+func (b *Bucket) PutObject(ctx context.Context, key string, value io.Reader, options ...storage.PutOption) (storage.ObjectInfo, error) {
+	if err := context.Cause(ctx); err != nil {
+		return storage.ObjectInfo{}, err
+	}
+	if err := storage.ValidObjectKey(key); err != nil {
+		return storage.ObjectInfo{}, err
+	}
+	if err := b.stat(); err != nil {
+		return storage.ObjectInfo{}, err
+	}
+
+	path := b.path(key)
+	dir, base := filepath.Split(path)
+
+	if err := os.MkdirAll(dir, 0777); err != nil {
+		return storage.ObjectInfo{}, err
+	}
+
+	putOptions := storage.NewPutOptions(options...)
+	ifMatch := putOptions.IfMatch()
+	ifNoneMatch := putOptions.IfNoneMatch()
+	switch ifNoneMatch {
+	case "", "*":
+	default:
+		return storage.ObjectInfo{}, storage.ErrInvalidObjectTag
+	}
+
+	temp, err := os.CreateTemp(dir, base+tempFilePattern)
+	if err != nil {
+		return storage.ObjectInfo{}, err
+	}
+	removeTemp := true
+	defer func() {
+		if removeTemp {
+			os.Remove(temp.Name())
+		}
+		temp.Close()
+	}()
+
+	etag := md5.New()
+	if _, err := io.Copy(io.MultiWriter(temp, etag), value); err != nil {
+		return storage.ObjectInfo{}, err
+	}
+	if _, err := temp.Seek(0, io.SeekStart); err != nil {
+		return storage.ObjectInfo{}, err
+	}
+	if err := temp.Chmod(0644); err != nil {
+		return storage.ObjectInfo{}, err
+	}
+	s, err := temp.Stat()
+	if err != nil {
+		return storage.ObjectInfo{}, err
+	}
+
+	object := storage.ObjectInfo{
+		CacheControl:    putOptions.CacheControl(),
+		ContentType:     putOptions.ContentType(),
+		ContentEncoding: putOptions.ContentEncoding(),
+		Metadata:        putOptions.Metadata(),
+		ETag:            hex.EncodeToString(etag.Sum(nil)),
+	}
+
+	if err := writeObjectInfo(temp, object); err != nil {
+		return storage.ObjectInfo{}, err
+	}
+
+	switch {
+	case ifNoneMatch != "":
+		if err := renameIfNotExist(temp.Name(), path); err != nil {
+			return storage.ObjectInfo{}, storage.ErrObjectNotMatch
+		}
+
+	case ifMatch != "":
+		currentObjectFile, err := os.Open(path)
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				err = storage.ErrObjectNotMatch
+			}
+			return storage.ObjectInfo{}, err
+		}
+		defer currentObjectFile.Close()
+
+		currentFd := int(currentObjectFile.Fd())
+		if err := unix.Flock(currentFd, unix.LOCK_EX|unix.LOCK_NB); err != nil {
+			return storage.ObjectInfo{}, storage.ErrObjectNotMatch
+		}
+		defer unix.Flock(currentFd, unix.LOCK_UN)
+
+		currentObjectInfo, err := readObjectInfo(currentObjectFile)
+		if err != nil {
+			return storage.ObjectInfo{}, err
+		}
+		if currentObjectInfo.ETag != ifMatch {
+			return storage.ObjectInfo{}, storage.ErrObjectNotMatch
+		}
+
+		fallthrough
+	default:
+		if err := os.Rename(temp.Name(), path); err != nil {
+			return storage.ObjectInfo{}, err
+		}
+	}
+
+	removeTemp = false
+	object.Size = s.Size()
+	object.LastModified = s.ModTime()
+	return object, nil
+}
+
+func (b *Bucket) DeleteObject(ctx context.Context, key string) error {
+	if err := context.Cause(ctx); err != nil {
+		return err
+	}
+	if err := storage.ValidObjectKey(key); err != nil {
+		return err
+	}
+	if err := b.stat(); err != nil {
+		return err
+	}
+	filePath := b.path(key)
+	if err := os.Remove(filePath); err != nil {
+		if !isErrNotExist(err) {
+			return err
+		}
+	}
+	b.removeEmptyDirectories(filepath.Dir(filePath))
+	return nil
+}
+
+func (b *Bucket) DeleteObjects(ctx context.Context, keys []string) error {
+	if err := context.Cause(ctx); err != nil {
+		return err
+	}
+	for _, key := range keys {
+		if err := storage.ValidObjectKey(key); err != nil {
+			return err
+		}
+	}
+	if err := b.stat(); err != nil {
+		return err
+	}
+	var errs []error
+	var dirs []string
+	for _, key := range keys {
+		filePath := b.path(key)
+		if err := os.Remove(filePath); err != nil {
+			if !isErrNotExist(err) {
+				errs = append(errs, err)
+			}
+		} else {
+			dirs = append(dirs, filepath.Dir(filePath))
+		}
+	}
+	slices.Sort(dirs)
+	dirs = slices.Compact(dirs)
+	for _, dir := range dirs {
+		b.removeEmptyDirectories(dir)
+	}
+	return errors.Join(errs...)
+}
+
+func (b *Bucket) ListObjects(ctx context.Context, options ...storage.ListOption) iter.Seq2[storage.Object, error] {
+	listOptions := storage.NewListOptions(options...)
+
+	seq := func(yield func(storage.Object, error) bool) {
+		if err := context.Cause(ctx); err != nil {
+			yield(storage.Object{}, err)
+			return
+		}
+		if err := b.stat(); err != nil {
+			yield(storage.Object{}, err)
+			return
+		}
+
+		delimiter := listOptions.KeyDelimiter()
+		prefix := listOptions.KeyPrefix()
+		dirPath := "."
+		if i := strings.LastIndexByte(prefix, '/'); i >= 0 {
+			dirPath = prefix[:i]
+		}
+
+		switch delimiter {
+		case "", "/":
+		default:
+			yield(storage.Object{}, fmt.Errorf("unsupported delimiter for file storage: %q (must be '/')", delimiter))
+			return
+		}
+
+		if delimiter != "" {
+			b.listObjectsShallow(ctx, dirPath, yield, listOptions)
+		} else {
+			b.listObjectsRecursive(ctx, dirPath, yield, listOptions)
+		}
+	}
+
+	return sequtil.Limit(seq, listOptions.MaxKeys())
+}
+
+func (b *Bucket) WatchObjects(ctx context.Context, options ...storage.ListOption) iter.Seq2[storage.Object, error] {
+	return func(yield func(storage.Object, error) bool) {
+		if err := context.Cause(ctx); err != nil {
+			yield(storage.Object{}, err)
+			return
+		}
+
+		if err := b.stat(); err != nil {
+			yield(storage.Object{}, err)
+			return
+		}
+
+		watcher, err := fsnotify.NewWatcher()
+		if err != nil {
+			yield(storage.Object{}, err)
+			return
+		}
+		defer watcher.Close()
+
+		listOptions := storage.NewListOptions(options...)
+		prefix := listOptions.KeyPrefix()
+		delimiter := listOptions.KeyDelimiter()
+
+		baseDirPath := "."
+		if i := strings.LastIndexByte(prefix, '/'); i >= 0 {
+			baseDirPath = prefix[:i]
+		}
+
+		dirPath := filepath.Join(b.root, baseDirPath)
+
+		for _, err := range backoff.Seq(ctx) {
+			if err != nil {
+				yield(storage.Object{}, err)
+				return
+			}
+			_, err := os.Stat(dirPath)
+			if err == nil {
+				break
+			}
+			if !errors.Is(err, fs.ErrNotExist) {
+				yield(storage.Object{}, err)
+				return
+			}
+		}
+
+		if delimiter == "/" {
+			err = watcher.Add(dirPath)
+		} else {
+			err = filepath.WalkDir(dirPath, func(path string, d fs.DirEntry, err error) error {
+				if err != nil {
+					return err
+				}
+				if d.IsDir() {
+					if err := watcher.Add(path); err != nil && !isErrNotExist(err) {
+						return err
+					}
+				}
+				return nil
+			})
+		}
+
+		if err != nil && !isErrNotExist(err) {
+			yield(storage.Object{}, err)
+			return
+		}
+
+		for object, err := range b.ListObjects(ctx, options...) {
+			if !yield(object, err) {
+				return
+			}
+		}
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+
+			case event, ok := <-watcher.Events:
+				if !ok {
+					return
+				}
+				if strings.HasSuffix(event.Name, tempFileSuffix) {
+					continue
+				}
+				relativePath, _ := filepath.Rel(b.root, event.Name)
+				objectKey := filepath.ToSlash(relativePath)
+
+				if event.Has(fsnotify.Create | fsnotify.Write) {
+					s, err := os.Stat(event.Name)
+					if err != nil {
+						if !isErrNotExist(err) && !yield(storage.Object{}, err) {
+							return
+						}
+					} else if s.IsDir() {
+						if delimiter == "" {
+							if err := watcher.Add(event.Name); err != nil {
+								yield(storage.Object{}, err)
+								return
+							}
+						} else {
+							if !yield(storage.Object{Key: objectKey + "/"}, nil) {
+								return
+							}
+						}
+					} else {
+						if !yield(storage.Object{
+							Key:          objectKey,
+							Size:         s.Size(),
+							LastModified: s.ModTime(),
+						}, nil) {
+							return
+						}
+					}
+				}
+
+				if event.Has(fsnotify.Remove) {
+					if !yield(storage.Object{
+						Key:          objectKey,
+						Size:         -1, // deletion marker
+						LastModified: time.Now(),
+					}, nil) {
+						return
+					}
+				}
+
+			case err, ok := <-watcher.Errors:
+				if !ok {
+					return
+				}
+				if !yield(storage.Object{}, err) {
+					return
+				}
+			}
+		}
+	}
+}
+
+func (b *Bucket) listObjectsShallow(ctx context.Context, dirPath string, yield func(storage.Object, error) bool, listOptions *storage.ListOptions) {
+	prefix := listOptions.KeyPrefix()
+	startAfter := listOptions.StartAfter()
+
+	entries, err := fs.ReadDir(os.DirFS(b.root), dirPath)
+	if err != nil {
+		if !isErrNotExist(err) {
+			yield(storage.Object{}, err)
+		}
+		return
+	}
+
+	for _, entry := range entries {
+		fileName := entry.Name()
+
+		if strings.HasSuffix(fileName, tempFileSuffix) {
+			continue
+		}
+
+		key := path.Join(dirPath, fileName)
+		if !strings.HasPrefix(key, prefix) || key <= startAfter {
+			continue
+		}
+
+		if entry.IsDir() {
+			if !yield(storage.Object{Key: key + "/"}, nil) {
+				return
+			}
+			continue
+		}
+
+		info, err := entry.Info()
+		if err != nil {
+			if !isErrNotExist(err) {
+				yield(storage.Object{}, err)
+				return
+			}
+			continue
+		}
+
+		object := storage.Object{
+			Key:          key,
+			Size:         info.Size(),
+			LastModified: info.ModTime(),
+		}
+
+		if !yield(object, nil) {
+			return
+		}
+	}
+}
+
+func (b *Bucket) listObjectsRecursive(ctx context.Context, dirPath string, yield func(storage.Object, error) bool, listOptions *storage.ListOptions) {
+	prefix := listOptions.KeyPrefix()
+	startAfter := listOptions.StartAfter()
+
+	err := fs.WalkDir(os.DirFS(b.root), dirPath, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if strings.HasSuffix(path, tempFileSuffix) {
+			return nil
+		}
+		if !strings.HasPrefix(path, prefix) || path <= startAfter {
+			return nil
+		}
+
+		info, err := d.Info()
+		if err != nil {
+			if !isErrNotExist(err) {
+				return err
+			}
+			return nil
+		}
+
+		object := storage.Object{
+			Key:          path,
+			Size:         info.Size(),
+			LastModified: info.ModTime(),
+		}
+
+		if !yield(object, nil) {
+			return fs.SkipAll
+		}
+		return nil
+	})
+
+	if err != nil && !isErrNotExist(err) {
+		yield(storage.Object{}, err)
+		return
+	}
+}
+
+func (b *Bucket) path(key string) string {
+	return filepath.Join(b.root, filepath.FromSlash(key))
+}
+
+func (b *Bucket) stat() error {
+	s, err := os.Stat(b.root)
+	if err != nil {
+		return err
+	}
+	if !s.IsDir() {
+		return fmt.Errorf("file bucket location is not a directory: %s", b.root)
+	}
+	return nil
+}
+
+func isErrNotExist(err error) bool {
+	return errors.Is(err, fs.ErrNotExist)
+}
+
+// removeEmptyDirectories recursively removes empty directories up to the bucket root
+func (b *Bucket) removeEmptyDirectories(dir string) {
+	// Don't remove the bucket root itself
+	if dir == b.root || dir == filepath.Dir(b.root) || dir == "." || dir == "/" {
+		return
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+
+	if len(entries) == 0 {
+		if err := os.Remove(dir); err == nil {
+			b.removeEmptyDirectories(filepath.Dir(dir))
+		}
+	}
+}
+
+func readObjectInfo(f *os.File) (storage.ObjectInfo, error) {
+	s, err := f.Stat()
+	if err != nil {
+		return storage.ObjectInfo{}, err
+	}
+
+	object := storage.ObjectInfo{
+		Size:         s.Size(),
+		LastModified: s.ModTime(),
+	}
+
+	fd := int(f.Fd())
+	fb := make([]byte, 256)
+	for attr, value := range map[string]*string{
+		xattrCacheControl:    &object.CacheControl,
+		xattrContentType:     &object.ContentType,
+		xattrContentEncoding: &object.ContentEncoding,
+		xattrETag:            &object.ETag,
+	} {
+		size, err := unix.Fgetxattr(fd, attr, fb)
+		if err == nil && size > 0 {
+			*value = string(fb[:size])
+		} else if err != nil && !isErrAttrNotExist(err) {
+			return storage.ObjectInfo{}, fmt.Errorf("%s: reading %s: %w", f.Name(), attr, err)
+		}
+	}
+
+	if size, err := unix.Fgetxattr(fd, xattrMetadata, nil); err == nil && size > 0 {
+		data := make([]byte, size)
+		n, err := unix.Fgetxattr(fd, xattrMetadata, data)
+		if err != nil {
+			return storage.ObjectInfo{}, fmt.Errorf("%s: reading metadata xattr: %w", f.Name(), err)
+		}
+		if err := json.Unmarshal(data[:n], &object.Metadata); err != nil {
+			return storage.ObjectInfo{}, fmt.Errorf("%s: parsing metadata: %w", f.Name(), err)
+		}
+	} else if err != nil && !isErrAttrNotExist(err) {
+		return storage.ObjectInfo{}, fmt.Errorf("%s: checking metadata xattr size: %w", f.Name(), err)
+	}
+
+	return object, nil
+}
+
+func writeObjectInfo(f *os.File, object storage.ObjectInfo) error {
+	fd := int(f.Fd())
+	for attr, value := range map[string]string{
+		xattrCacheControl:    object.CacheControl,
+		xattrContentType:     object.ContentType,
+		xattrContentEncoding: object.ContentEncoding,
+		xattrETag:            object.ETag,
+	} {
+		if value != "" {
+			if err := unix.Fsetxattr(fd, attr, []byte(value), 0); err != nil {
+				return fmt.Errorf("setting xattr %s: %w", attr, err)
+			}
+		}
+	}
+
+	if object.Metadata != nil {
+		metadata, err := json.Marshal(object.Metadata)
+		if err != nil {
+			return fmt.Errorf("marshaling metadata: %w", err)
+		}
+		if err := unix.Fsetxattr(fd, xattrMetadata, metadata, 0); err != nil {
+			return fmt.Errorf("setting metadata xattr: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func (b *Bucket) PresignGetObject(ctx context.Context, key string, options ...storage.GetOption) (string, error) {
+	if err := storage.ValidObjectKey(key); err != nil {
+		return "", storage.ErrInvalidObjectKey
+	}
+	return "", storage.ErrPresignNotSupported
+}
+
+func (b *Bucket) PresignPutObject(ctx context.Context, key string, options ...storage.PutOption) (string, error) {
+	if err := storage.ValidObjectKey(key); err != nil {
+		return "", storage.ErrInvalidObjectKey
+	}
+	return "", storage.ErrPresignNotSupported
+}
+
+func (b *Bucket) PresignHeadObject(ctx context.Context, key string) (string, error) {
+	if err := storage.ValidObjectKey(key); err != nil {
+		return "", storage.ErrInvalidObjectKey
+	}
+	return "", storage.ErrPresignNotSupported
+}
+
+func (b *Bucket) PresignDeleteObject(ctx context.Context, key string) (string, error) {
+	if err := storage.ValidObjectKey(key); err != nil {
+		return "", storage.ErrInvalidObjectKey
+	}
+	return "", storage.ErrPresignNotSupported
+}

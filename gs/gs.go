@@ -1,0 +1,546 @@
+package gs
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"iter"
+	"net/http"
+	"slices"
+	"strconv"
+	"strings"
+	"time"
+
+	gcloud "cloud.google.com/go/storage"
+	"github.com/firetiger-oss/storage"
+	"github.com/firetiger-oss/storage/backoff"
+	"github.com/firetiger-oss/storage/cache"
+	"github.com/firetiger-oss/storage/concurrent"
+	"github.com/firetiger-oss/storage/internal/gsclient"
+	"github.com/firetiger-oss/storage/internal/sequtil"
+	"github.com/firetiger-oss/storage/uri"
+	"google.golang.org/api/googleapi"
+	"google.golang.org/api/iterator"
+	"google.golang.org/api/option"
+)
+
+func init() {
+	storage.Register("gs", NewRegistry())
+}
+
+type RegistryOption func(*registryOptions)
+
+type registryOptions struct {
+	httpClient *http.Client
+}
+
+func WithHTTPClient(httpClient *http.Client) RegistryOption {
+	return func(opts *registryOptions) {
+		opts.httpClient = httpClient
+	}
+}
+
+func NewRegistry(options ...RegistryOption) storage.Registry {
+	opts := &registryOptions{}
+	for _, option := range options {
+		option(opts)
+	}
+
+	var cachedGoogleClient cache.Value[*gcloud.Client]
+	var cachedPutClient cache.Value[*gsclient.Client]
+	return storage.RegistryFunc(func(ctx context.Context, bucket string) (storage.Bucket, error) {
+		var httpClient *http.Client
+		if opts.httpClient != nil {
+			httpClient = opts.httpClient
+		} else {
+			httpClient = &http.Client{Transport: &http.Transport{}}
+		}
+
+		var err error
+		httpClient, err = gsclient.NewHTTPClientWithDefaultCredentials(ctx, httpClient)
+		if err != nil {
+			return nil, err
+		}
+
+		googleClient, err := cachedGoogleClient.Load(func() (*gcloud.Client, error) {
+			return gcloud.NewClient(context.Background(), option.WithHTTPClient(httpClient))
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		putClient, err := cachedPutClient.Load(func() (*gsclient.Client, error) {
+			return gsclient.NewGoogleCloudStorageClient(context.Background(), bucket, gsclient.WithHTTPClient(httpClient))
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		return NewBucket(googleClient, putClient, bucket), nil
+	})
+}
+
+func NewBucket(client *gcloud.Client, putClient *gsclient.Client, bucket string, options ...BucketOption) *Bucket {
+	b := &Bucket{
+		client:    client,
+		putClient: putClient,
+		bucket:    bucket,
+	}
+	for _, opt := range options {
+		opt(b)
+	}
+	return b
+}
+
+type BucketOption func(*Bucket)
+
+type Bucket struct {
+	client    *gcloud.Client
+	putClient *gsclient.Client
+	bucket    string
+}
+
+func (b *Bucket) Location() string {
+	return uri.Join("gs", b.bucket)
+}
+
+func (b *Bucket) Access(ctx context.Context) error {
+	_, err := b.client.Bucket(b.bucket).Attrs(ctx)
+	if err != nil {
+		return makeIcebergError(err)
+	}
+	return nil
+}
+
+func (b *Bucket) Create(ctx context.Context) error {
+	err := b.client.Bucket(b.bucket).Create(ctx, "", nil)
+	if err != nil {
+		if gerr, ok := err.(*googleapi.Error); ok {
+			if gerr.Code == http.StatusConflict {
+				return errors.Join(storage.ErrBucketExist, err)
+			}
+		}
+		return makeIcebergError(err)
+	}
+	return nil
+}
+
+func (b *Bucket) HeadObject(ctx context.Context, key string) (storage.ObjectInfo, error) {
+	if err := storage.ValidObjectKey(key); err != nil {
+		return storage.ObjectInfo{}, err
+	}
+
+	obj := b.client.Bucket(b.bucket).Object(key)
+	attrs, err := obj.Attrs(ctx)
+	if err != nil {
+		return storage.ObjectInfo{}, makeIcebergError(err)
+	}
+
+	object := storage.ObjectInfo{
+		CacheControl:    attrs.CacheControl,
+		ContentType:     attrs.ContentType,
+		ContentEncoding: attrs.ContentEncoding,
+		ETag:            makeETag(attrs.Generation),
+		Size:            attrs.Size,
+		LastModified:    attrs.Updated,
+		Metadata:        attrs.Metadata,
+	}
+	return object, nil
+}
+
+func (b *Bucket) GetObject(ctx context.Context, key string, options ...storage.GetOption) (io.ReadCloser, storage.ObjectInfo, error) {
+	if err := storage.ValidObjectKey(key); err != nil {
+		return nil, storage.ObjectInfo{}, err
+	}
+
+	obj := b.client.Bucket(b.bucket).Object(key)
+	attrs, err := obj.Attrs(ctx)
+	if err != nil {
+		return nil, storage.ObjectInfo{}, makeIcebergError(err)
+	}
+
+	getOptions := storage.NewGetOptions(options...)
+	start, end, hasRange := getOptions.BytesRange()
+
+	var reader *gcloud.Reader
+	if hasRange {
+		if err := storage.ValidObjectRange(key, start, end); err != nil {
+			return nil, storage.ObjectInfo{}, err
+		}
+		reader, err = obj.NewRangeReader(ctx, start, (end+1)-start)
+	} else {
+		reader, err = obj.NewReader(ctx)
+	}
+	if err != nil {
+		return nil, storage.ObjectInfo{}, makeIcebergError(err)
+	}
+
+	// https://cloud.google.com/storage/docs/transcoding
+	if hasRange && reader.Attrs.Decompressed {
+		if _, err := io.CopyN(io.Discard, reader, start); err != nil {
+			reader.Close()
+			return nil, storage.ObjectInfo{}, err
+		}
+	}
+
+	object := storage.ObjectInfo{
+		CacheControl:    attrs.CacheControl,
+		ContentType:     attrs.ContentType,
+		ContentEncoding: reader.Attrs.ContentEncoding,
+		ETag:            makeETag(attrs.Generation),
+		Size:            attrs.Size,
+		LastModified:    attrs.Updated,
+		Metadata:        attrs.Metadata,
+	}
+	return reader, object, nil
+}
+
+func (b *Bucket) PutObject(ctx context.Context, key string, value io.Reader, options ...storage.PutOption) (storage.ObjectInfo, error) {
+	if err := storage.ValidObjectKey(key); err != nil {
+		return storage.ObjectInfo{}, err
+	}
+	putOptions := storage.NewPutOptions(options...)
+	valueContentLength, err := putOptions.ContentLength(value)
+	if err != nil {
+		return storage.ObjectInfo{}, err
+	}
+
+	var object storage.ObjectInfo
+	if valueContentLength < 0 {
+		object, err = b.putClient.PutObjectStreaming(ctx, key, value, putOptions)
+	} else {
+		object, err = b.putClient.PutObjectSingleRequest(ctx, key, value, valueContentLength, putOptions)
+	}
+	if err != nil {
+		return storage.ObjectInfo{}, makeIcebergError(err)
+	}
+	return object, nil
+}
+
+func (b *Bucket) DeleteObject(ctx context.Context, key string) error {
+	if err := storage.ValidObjectKey(key); err != nil {
+		return err
+	}
+	err := b.client.Bucket(b.bucket).Object(key).Delete(ctx)
+	if err != nil && !errors.Is(err, gcloud.ErrObjectNotExist) {
+		return makeIcebergError(err)
+	}
+	return nil
+}
+
+func (b *Bucket) DeleteObjects(ctx context.Context, keys []string) error {
+	if err := context.Cause(ctx); err != nil {
+		return err
+	}
+
+	for _, key := range keys {
+		if err := storage.ValidObjectKey(key); err != nil {
+			return err
+		}
+	}
+
+	return concurrent.RunTasks(ctx, keys, func(ctx context.Context, key string) error {
+		return b.DeleteObject(ctx, key)
+	})
+}
+
+type listedObject struct {
+	key          string
+	generation   int64
+	size         int64
+	lastModified time.Time
+}
+
+func (b *Bucket) listObjects(ctx context.Context, listOptions *storage.ListOptions) iter.Seq2[listedObject, error] {
+	return func(yield func(listedObject, error) bool) {
+		delimiter := listOptions.KeyDelimiter()
+		prefix := listOptions.KeyPrefix()
+		startAfter := listOptions.StartAfter()
+
+		it := b.client.Bucket(b.bucket).Objects(ctx, &gcloud.Query{
+			Delimiter:   delimiter,
+			Prefix:      prefix,
+			StartOffset: startAfter, // inclusive
+		})
+
+		objects := make([]listedObject, 0, 100)
+		for {
+			attrs, err := it.Next()
+			if err == iterator.Done {
+				return
+			}
+			if err != nil {
+				yield(listedObject{}, makeIcebergError(err))
+				return
+			}
+
+			if attrs.Prefix != "" {
+				if attrs.Prefix > startAfter {
+					objects = append(objects, listedObject{
+						key: attrs.Prefix,
+					})
+				}
+			} else {
+				if attrs.Name > startAfter {
+					objects = append(objects, listedObject{
+						key:          attrs.Name,
+						generation:   attrs.Generation,
+						size:         attrs.Size,
+						lastModified: attrs.Updated,
+					})
+				}
+			}
+
+			if it.PageInfo().Remaining() == 0 {
+				slices.SortFunc(objects, func(a, b listedObject) int {
+					return strings.Compare(a.key, b.key)
+				})
+
+				for _, object := range objects {
+					if !yield(object, nil) {
+						return
+					}
+				}
+
+				objects = objects[:0]
+			}
+		}
+	}
+}
+
+func (b *Bucket) ListObjects(ctx context.Context, options ...storage.ListOption) iter.Seq2[storage.Object, error] {
+	listOptions := storage.NewListOptions(options...)
+	listObjects := func(yield func(storage.Object, error) bool) {
+		for object, err := range b.listObjects(ctx, listOptions) {
+			if !yield(storage.Object{
+				Key:          object.key,
+				Size:         object.size,
+				LastModified: object.lastModified,
+			}, err) {
+				return
+			}
+		}
+	}
+	return sequtil.Limit(listObjects, listOptions.MaxKeys())
+}
+
+func (b *Bucket) WatchObjects(ctx context.Context, options ...storage.ListOption) iter.Seq2[storage.Object, error] {
+	return func(yield func(storage.Object, error) bool) {
+		type versionedObject struct {
+			object  listedObject
+			version int
+		}
+
+		currentObjects := make(map[string]versionedObject)
+		currentVersion := 0
+		listOptions := storage.NewListOptions(options...)
+
+		for {
+		backoffLoop:
+			for _, err := range backoff.Seq(ctx) {
+				if err != nil { // context canceled
+					return
+				}
+
+				var changeCount int
+				for object, err := range b.listObjects(ctx, listOptions) {
+					if err != nil {
+						if !yield(storage.Object{}, err) {
+							return
+						}
+						continue backoffLoop
+					}
+
+					current, exists := currentObjects[object.key]
+					if !exists ||
+						object.generation != current.object.generation ||
+						object.lastModified.After(current.object.lastModified) {
+						if !yield(storage.Object{
+							Key:          object.key,
+							Size:         object.size,
+							LastModified: object.lastModified,
+						}, nil) {
+							return
+						}
+						changeCount++
+					}
+
+					currentObjects[object.key] = versionedObject{
+						object:  object,
+						version: currentVersion,
+					}
+				}
+
+				var deletedObjects []listedObject
+				for key, object := range currentObjects {
+					if object.version < currentVersion {
+						deletedObjects = append(deletedObjects, object.object)
+						delete(currentObjects, key)
+					}
+				}
+
+				if len(deletedObjects) > 0 {
+					deletionTime := time.Now()
+
+					slices.SortFunc(deletedObjects, func(a, b listedObject) int {
+						return -strings.Compare(a.key, b.key)
+					})
+
+					for _, object := range deletedObjects {
+						if !yield(storage.Object{
+							Key:          object.key,
+							Size:         -1, // deletion marker
+							LastModified: deletionTime,
+						}, nil) {
+							return
+						}
+						changeCount++
+					}
+				}
+
+				currentVersion++
+				if changeCount > 0 {
+					break // continue to outer loop to reset backoff delay
+				}
+			}
+		}
+	}
+}
+
+func (b *Bucket) PresignGetObject(ctx context.Context, key string, options ...storage.GetOption) (string, error) {
+	if err := storage.ValidObjectKey(key); err != nil {
+		return "", storage.ErrInvalidObjectKey
+	}
+
+	getOptions := storage.NewGetOptions(options...)
+	opts := &gcloud.SignedURLOptions{
+		Scheme:  gcloud.SigningSchemeV4,
+		Method:  "GET",
+		Expires: time.Now().Add(5 * time.Minute), // Default 5 minute expiration
+	}
+
+	// Add range header if specified
+	if start, end, ok := getOptions.BytesRange(); ok {
+		opts.Headers = append(opts.Headers, "Range:bytes="+strconv.FormatInt(start, 10)+"-"+strconv.FormatInt(end, 10))
+	}
+
+	url, err := b.client.Bucket(b.bucket).SignedURL(key, opts)
+	if err != nil {
+		return "", makeIcebergError(err)
+	}
+	return url, nil
+}
+
+func (b *Bucket) PresignPutObject(ctx context.Context, key string, options ...storage.PutOption) (string, error) {
+	if err := storage.ValidObjectKey(key); err != nil {
+		return "", storage.ErrInvalidObjectKey
+	}
+
+	putOptions := storage.NewPutOptions(options...)
+	opts := &gcloud.SignedURLOptions{
+		Scheme:      gcloud.SigningSchemeV4,
+		Method:      "PUT",
+		Expires:     time.Now().Add(5 * time.Minute), // Default 5 minute expiration
+		ContentType: putOptions.ContentType(),
+	}
+
+	// Add other headers if specified
+	if cacheControl := putOptions.CacheControl(); cacheControl != "" {
+		opts.Headers = append(opts.Headers, "Cache-Control:"+cacheControl)
+	}
+	if contentEncoding := putOptions.ContentEncoding(); contentEncoding != "" {
+		opts.Headers = append(opts.Headers, "Content-Encoding:"+contentEncoding)
+	}
+	if ifMatch := putOptions.IfMatch(); ifMatch != "" {
+		opts.Headers = append(opts.Headers, "If-Match:"+ifMatch)
+	}
+	if ifNoneMatch := putOptions.IfNoneMatch(); ifNoneMatch != "" {
+		opts.Headers = append(opts.Headers, "If-None-Match:"+ifNoneMatch)
+	}
+
+	// Add custom metadata headers
+	for k, v := range putOptions.Metadata() {
+		opts.Headers = append(opts.Headers, "x-goog-meta-"+k+":"+v)
+	}
+
+	url, err := b.client.Bucket(b.bucket).SignedURL(key, opts)
+	if err != nil {
+		return "", makeIcebergError(err)
+	}
+	return url, nil
+}
+
+func (b *Bucket) PresignHeadObject(ctx context.Context, key string) (string, error) {
+	if err := storage.ValidObjectKey(key); err != nil {
+		return "", storage.ErrInvalidObjectKey
+	}
+
+	opts := &gcloud.SignedURLOptions{
+		Scheme:  gcloud.SigningSchemeV4,
+		Method:  "HEAD",
+		Expires: time.Now().Add(5 * time.Minute), // Default 5 minute expiration
+	}
+
+	url, err := b.client.Bucket(b.bucket).SignedURL(key, opts)
+	if err != nil {
+		return "", makeIcebergError(err)
+	}
+	return url, nil
+}
+
+func (b *Bucket) PresignDeleteObject(ctx context.Context, key string) (string, error) {
+	if err := storage.ValidObjectKey(key); err != nil {
+		return "", storage.ErrInvalidObjectKey
+	}
+
+	opts := &gcloud.SignedURLOptions{
+		Scheme:  gcloud.SigningSchemeV4,
+		Method:  "DELETE",
+		Expires: time.Now().Add(5 * time.Minute), // Default 5 minute expiration
+	}
+
+	url, err := b.client.Bucket(b.bucket).SignedURL(key, opts)
+	if err != nil {
+		return "", makeIcebergError(err)
+	}
+	return url, nil
+}
+
+func makeETag(generation int64) string {
+	return fmt.Sprintf("%016x", generation)
+}
+
+func makeIcebergError(err error) error {
+	if errors.Is(err, gcloud.ErrObjectNotExist) {
+		return errors.Join(storage.ErrObjectNotFound, err)
+	}
+	if errors.Is(err, gcloud.ErrBucketNotExist) {
+		return errors.Join(storage.ErrBucketNotFound, err)
+	}
+	var apiErr *googleapi.Error
+	if errors.As(err, &apiErr) && apiErr.Code == http.StatusPreconditionFailed {
+		return errors.Join(storage.ErrObjectNotMatch, err)
+	}
+
+	// Handle signing-related errors using proper error type checking
+	var gcsErr *googleapi.Error
+	if errors.As(err, &gcsErr) {
+		// Handle authentication/authorization errors that indicate signing not supported
+		if gcsErr.Code == http.StatusUnauthorized || gcsErr.Code == http.StatusForbidden {
+			return errors.Join(storage.ErrPresignNotSupported, err)
+		}
+	}
+
+	// Handle specific GCS signing validation errors (these are plain errors.New() calls)
+	// These validation errors are NOT wrapped in googleapi.Error, so string checking is necessary
+	errMsg := err.Error()
+	if strings.Contains(errMsg, "missing required GoogleAccessID") ||
+		strings.Contains(errMsg, "missing required SignedURLOptions") ||
+		strings.Contains(errMsg, "exactly one of PrivateKey or SignedBytes must be set") ||
+		strings.Contains(errMsg, "unable to detect default GoogleAccessID") {
+		return errors.Join(storage.ErrPresignNotSupported, err)
+	}
+
+	return err
+}

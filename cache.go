@@ -1,0 +1,313 @@
+package storage
+
+import (
+	"bytes"
+	"context"
+	"io"
+	"iter"
+
+	"github.com/firetiger-oss/storage/cache"
+)
+
+const (
+	DefaultCachePageSize       = 256 * 1024       // 256 KiB
+	DefaultObjectInfoCacheSize = 512 * 1024       // 512 KiB
+	DefaultObjectPageCacheSize = 64 * 1024 * 1024 // 64 MiB
+	DefaultObjectCacheSize     = 64 * 1024 * 1024 // 64 MiB
+)
+
+// CacheOption is a function type that can be used to configure new Cache
+// instances created by calling NewCache.
+type CacheOption func(*Cache)
+
+// CachePageSize sets the size of each page in the cache. This is used when
+// fetching byte ranges from objects. If the page size is zero or negative,
+// no caching is done for byte ranges.
+func CachePageSize(size int64) CacheOption {
+	return func(cache *Cache) { cache.pageSize = size }
+}
+
+// ObjectCacheSize sets the maximum size of the cache ofr full objects.
+func ObjectCacheSize(size int64) CacheOption {
+	return func(cache *Cache) { cache.objects.Limit = size }
+}
+
+// ObjectInfoCacheSize sets the maximum size of the cache for ObjectInfo
+// values (e.g., from HeadObject calls).
+func ObjectInfoCacheSize(size int64) CacheOption {
+	return func(cache *Cache) { cache.infos.Limit = size }
+}
+
+// ObjectPageCacheSize sets the maximum size of the cache for object pages
+// stored from calls to GetObject with a byte range.
+func ObjectPageCacheSize(size int64) CacheOption {
+	return func(cache *Cache) { cache.pages.Limit = size }
+}
+
+// Cache is an in-memory cache for objects read from a Bucket.
+type Cache struct {
+	pages    cache.LRU[objectRange, []byte]
+	infos    cache.LRU[string, ObjectInfo]
+	objects  cache.LRU[string, cachedObject]
+	pageSize int64
+}
+
+type objectRange struct {
+	object string
+	page   int
+}
+
+// NewCache constructs a new Cache instance configured with the options passed
+// as arguments.
+//
+// By default, the page and object caches are 64MiB each, and the object info
+// cache is 512KiB. The page size for byte ranges is set to 256KiB.
+func NewCache(options ...CacheOption) *Cache {
+	cache := &Cache{
+		pages: cache.LRU[objectRange, []byte]{
+			Limit: DefaultObjectPageCacheSize,
+		},
+		infos: cache.LRU[string, ObjectInfo]{
+			Limit: DefaultObjectInfoCacheSize,
+		},
+		objects: cache.LRU[string, cachedObject]{
+			Limit: DefaultObjectCacheSize,
+		},
+		pageSize: DefaultCachePageSize,
+	}
+	for _, option := range options {
+		option(cache)
+	}
+	return cache
+}
+
+// AdaptBucket returns a Bucket that caches the results of calls to HeadObject, and
+// GetObject.
+func (c *Cache) AdaptBucket(bucket Bucket) Bucket {
+	return &cachedBucket{Cache: c, bucket: bucket}
+}
+
+// PageSize returns the size of each page in the cache.
+func (c *Cache) PageSize() int64 {
+	return c.pageSize
+}
+
+// CacheStat contains statistics about the cache configuration and utilization.
+type CacheStat struct {
+	Limit     int64 // Maximum size of the cache in bytes.
+	Size      int64 // Current size of the cache in bytes.
+	Hits      int64 // Total number of cache hits.
+	Misses    int64 // Total number of cache misses.
+	Evictions int64 // Total number of evictions from the cache.
+}
+
+// Stat returns statistics about the cache, including the page size, number of
+func (c *Cache) Stat() (objects, infos, pages CacheStat) {
+	return CacheStat(c.objects.Stat()), CacheStat(c.infos.Stat()), CacheStat(c.pages.Stat())
+}
+
+var _ Adapter = (*Cache)(nil)
+
+type cachedObject struct {
+	info ObjectInfo
+	body []byte
+}
+
+type cachedBucket struct {
+	*Cache
+	bucket Bucket
+}
+
+func (c *cachedBucket) Location() string {
+	return c.bucket.Location()
+}
+
+func (c *cachedBucket) Access(ctx context.Context) error {
+	return c.bucket.Access(ctx)
+}
+
+func (c *cachedBucket) Create(ctx context.Context) error {
+	return c.bucket.Create(ctx)
+}
+
+func (c *cachedBucket) HeadObject(ctx context.Context, key string) (ObjectInfo, error) {
+	return c.infos.Load(key, func() (int64, ObjectInfo, error) {
+		object, err := c.bucket.HeadObject(ctx, key)
+		size := int64(0)
+		size += int64(len(key))
+		size += sizeOfObjectInfo(object)
+		return size, object, err
+	})
+}
+
+func (c *cachedBucket) GetObject(ctx context.Context, key string, options ...GetOption) (io.ReadCloser, ObjectInfo, error) {
+	var getOptions = NewGetOptions(options...)
+	var object cachedObject
+	var hit bool
+	var err error
+
+	if getOptions.byteRange {
+		pageSize := c.pageSize
+		if pageSize <= 0 {
+			return c.bucket.GetObject(ctx, key, options...)
+		}
+		if err := ValidObjectRange(key, getOptions.start, getOptions.end); err != nil {
+			return nil, ObjectInfo{}, err
+		}
+		object, hit = c.objects.Peek(key)
+		if hit {
+			goto done
+		}
+		info, ok := c.infos.Peek(key)
+		if ok && info.Size <= c.pageSize {
+			goto load
+		} else if !ok {
+			info, err = c.HeadObject(ctx, key)
+			if err != nil {
+				return nil, ObjectInfo{}, err
+			}
+		}
+
+		startPageIndex := int(getOptions.start / pageSize)
+		maxPageIndex := max(0, int((info.Size-1)/pageSize))
+		endPageIndex := min(maxPageIndex, int(getOptions.end/pageSize))
+		pageCount := endPageIndex - startPageIndex + 1
+		promises := make([]*cache.Promise[[]byte], pageCount)
+
+		for i := range promises {
+			thisPageIndex := startPageIndex + i
+			thisByteStart := int64(thisPageIndex) * pageSize
+			thisByteEnd := min(thisByteStart+pageSize, info.Size) - 1
+			thisPageKey := objectRange{object: key, page: thisPageIndex}
+			promises[i] = c.pages.Get(thisPageKey, func() (int64, []byte, error) {
+				reader, _, err := c.bucket.GetObject(ctx, key, BytesRange(thisByteStart, thisByteEnd))
+				if err != nil {
+					return 0, nil, err
+				}
+				defer reader.Close()
+				page := make([]byte, thisByteEnd-thisByteStart+1)
+				if _, err := io.ReadFull(reader, page); err != nil {
+					return 0, nil, err
+				}
+				return int64(len(page)), page, nil
+			})
+		}
+
+		offset := getOptions.start % pageSize
+		length := (getOptions.end + 1) - getOptions.start
+		pages := make([]io.Reader, len(promises))
+
+		for i, promise := range promises {
+			page, err := promise.Wait()
+			if err != nil {
+				return nil, ObjectInfo{}, err
+			}
+			pages[i] = bytes.NewReader(page[offset:])
+			offset = 0
+		}
+
+		return io.NopCloser(io.LimitReader(io.MultiReader(pages...), length)), info, nil
+	}
+
+load:
+	object, err = c.objects.Load(key, func() (int64, cachedObject, error) {
+		var object cachedObject
+		reader, info, err := c.bucket.GetObject(ctx, key)
+		if err != nil {
+			return 0, object, err
+		}
+		defer reader.Close()
+		object.info = info
+		object.body = make([]byte, info.Size)
+		if _, err := io.ReadFull(reader, object.body); err != nil {
+			return 0, object, err
+		}
+		size := int64(0)
+		size += int64(len(key))
+		size += int64(len(object.body))
+		size += sizeOfObjectInfo(object.info)
+		return size, object, nil
+	})
+	if err != nil {
+		return nil, ObjectInfo{}, err
+	}
+
+done:
+	body := object.body
+	if getOptions.byteRange {
+		body = body[:min(getOptions.end+1, int64(len(body)))]
+		body = body[min(getOptions.start, int64(len(body))):]
+	}
+	return newCachedObjectBody(body), object.info, nil
+}
+
+func (c *cachedBucket) PutObject(ctx context.Context, key string, r io.Reader, options ...PutOption) (ObjectInfo, error) {
+	return c.bucket.PutObject(ctx, key, r, options...)
+}
+
+func (c *cachedBucket) DeleteObject(ctx context.Context, key string) error {
+	c.objects.Drop(key)
+	c.infos.Drop(key)
+	return c.bucket.DeleteObject(ctx, key)
+}
+
+func (c *cachedBucket) DeleteObjects(ctx context.Context, keys []string) error {
+	c.objects.Drop(keys...)
+	c.infos.Drop(keys...)
+	return c.bucket.DeleteObjects(ctx, keys)
+}
+
+func (c *cachedBucket) ListObjects(ctx context.Context, options ...ListOption) iter.Seq2[Object, error] {
+	return c.bucket.ListObjects(ctx, options...)
+}
+
+func (c *cachedBucket) WatchObjects(ctx context.Context, options ...ListOption) iter.Seq2[Object, error] {
+	return c.bucket.WatchObjects(ctx, options...)
+}
+
+func (c *cachedBucket) PresignGetObject(ctx context.Context, key string, options ...GetOption) (string, error) {
+	return c.bucket.PresignGetObject(ctx, key, options...)
+}
+
+func (c *cachedBucket) PresignPutObject(ctx context.Context, key string, options ...PutOption) (string, error) {
+	return c.bucket.PresignPutObject(ctx, key, options...)
+}
+
+func (c *cachedBucket) PresignHeadObject(ctx context.Context, key string) (string, error) {
+	return c.bucket.PresignHeadObject(ctx, key)
+}
+
+func (c *cachedBucket) PresignDeleteObject(ctx context.Context, key string) (string, error) {
+	return c.bucket.PresignDeleteObject(ctx, key)
+}
+
+type cachedObjectBody struct {
+	bytes.Reader
+}
+
+func (r *cachedObjectBody) Close() error {
+	r.Reset(nil)
+	return nil
+}
+
+func newCachedObjectBody(data []byte) *cachedObjectBody {
+	r := new(cachedObjectBody)
+	r.Reset(data)
+	return r
+}
+
+// sizeOfObjectInfo returns an estimation of the size of the given ObjectInfo
+// in bytes. Ths result does not need to be exactly accurate, for example, we
+// don't account for the size of the ObjectInfo struct itself, nor the metadata
+// map's overhead.
+func sizeOfObjectInfo(info ObjectInfo) (size int64) {
+	for k, v := range info.Metadata {
+		size += int64(len(k))
+		size += int64(len(v))
+	}
+	size += int64(len(info.CacheControl))
+	size += int64(len(info.ContentType))
+	size += int64(len(info.ContentEncoding))
+	size += int64(len(info.ETag))
+	return
+}

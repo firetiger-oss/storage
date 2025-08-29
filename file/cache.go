@@ -1,0 +1,487 @@
+package file
+
+import (
+	"context"
+	"crypto/md5"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"io"
+	"io/fs"
+	"iter"
+	"os"
+	"path/filepath"
+	"sync"
+	"time"
+
+	"github.com/EmissarySocial/emissary/tools/cacheheader"
+	"github.com/firetiger-oss/storage"
+	"github.com/firetiger-oss/storage/cache/lru"
+)
+
+type Cache struct {
+	tmpdir string
+	size   int64
+	init   bool
+	once   sync.Once
+	mutex  sync.Mutex
+	items  lru.LRU[string, struct{}]
+}
+
+func NewCache(tmpdir string, size int64) *Cache {
+	return &Cache{tmpdir: tmpdir, size: size}
+}
+
+// shouldCacheObject determines if an object should be cached based on its cache control headers
+func shouldCacheObject(info storage.ObjectInfo) bool {
+	// If there is no cache control, do not cache the object
+	if info.CacheControl == "" {
+		return false
+	}
+
+	// Parse the cache control header
+	cc := cacheheader.ParseString(info.CacheControl)
+
+	// Do not cache objects that are private
+	if cc.Private {
+		return false
+	}
+
+	// Do not cache objects that have no-store (but allow no-cache and must-revalidate for revalidation)
+	if cc.NoStore {
+		return false
+	}
+
+	// Cache if there's a max age, immutable, or needs revalidation (no-cache/must-revalidate)
+	return cc.MaxAge > 0 || cc.Immutable || cc.NoCache || cc.MustRevalidate
+}
+
+// isObjectExpired checks if a cached object has expired based on its cache control and file modification time
+func isObjectExpired(info storage.ObjectInfo, fileInfo os.FileInfo) bool {
+	// If there's no cache control, consider it expired
+	if info.CacheControl == "" {
+		return true
+	}
+
+	cc := cacheheader.ParseString(info.CacheControl)
+
+	// If object is immutable, it never expires
+	if cc.Immutable {
+		return false
+	}
+
+	// If there's no max age, cannot expire
+	if cc.MaxAge <= 0 {
+		return false
+	}
+
+	// Check if the object has exceeded its max age based on file creation time
+	age := time.Since(fileInfo.ModTime())
+	maxAge := time.Duration(cc.MaxAge) * time.Second
+	return age > maxAge
+}
+
+// needsRevalidation checks if a cached object needs to be revalidated with the backend
+func needsRevalidation(info storage.ObjectInfo) bool {
+	if info.CacheControl == "" {
+		return false
+	}
+	cc := cacheheader.ParseString(info.CacheControl)
+	return cc.NoCache || cc.MustRevalidate
+}
+
+func (c *Cache) Stat() storage.CacheStat {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	return storage.CacheStat{
+		Limit:     c.size,
+		Size:      c.items.Size,
+		Hits:      c.items.Hits,
+		Misses:    c.items.Misses,
+		Evictions: c.items.Evictions,
+	}
+}
+
+func (c *Cache) AdaptBucket(bucket storage.Bucket) storage.Bucket {
+	c.once.Do(func() {
+		if err := os.MkdirAll(c.tmpdir, 0755); err != nil {
+			return
+		}
+
+		filepath.Walk(c.tmpdir, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			if !info.IsDir() {
+				c.insert(path, info.Size())
+			}
+			return nil
+		})
+
+		c.init = true
+	})
+
+	if !c.init {
+		return bucket
+	}
+
+	prefix := md5.Sum([]byte(bucket.Location()))
+	return &cachedBucket{
+		Cache:  c,
+		bucket: bucket,
+		prefix: hex.EncodeToString(prefix[:]),
+	}
+}
+
+func (c *Cache) delete(path string) {
+	c.mutex.Lock()
+	c.items.Delete(path)
+	c.mutex.Unlock()
+}
+
+func (c *Cache) lookup(path string) {
+	c.mutex.Lock()
+	c.items.Lookup(path) // just touch it to update the LRU data structure
+	c.mutex.Unlock()
+}
+
+func (c *Cache) insert(path string, size int64) {
+	var evictedPaths []string
+
+	defer func() {
+		for _, evictedPath := range evictedPaths {
+			os.Remove(evictedPath)
+		}
+	}()
+
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	if c.items.Insert(path, struct{}{}, size) {
+		for c.items.Size > c.size {
+			evictedPath, _, _, hasEvicted := c.items.Evict()
+			if !hasEvicted {
+				break
+			}
+			evictedPaths = append(evictedPaths, evictedPath)
+		}
+	}
+}
+
+type cachedBucket struct {
+	*Cache
+	bucket storage.Bucket
+	prefix string
+}
+
+func (b *cachedBucket) Location() string {
+	return b.bucket.Location()
+}
+
+func (b *cachedBucket) Access(ctx context.Context) error {
+	return b.bucket.Access(ctx)
+}
+
+func (b *cachedBucket) Create(ctx context.Context) error {
+	return b.bucket.Create(ctx)
+}
+
+func (b *cachedBucket) HeadObject(ctx context.Context, key string) (storage.ObjectInfo, error) {
+	if err := context.Cause(ctx); err != nil {
+		return storage.ObjectInfo{}, err
+	}
+	if err := storage.ValidObjectKey(key); err != nil {
+		return storage.ObjectInfo{}, err
+	}
+
+	filePath := b.makeFilePath(key)
+	f, err := os.Open(filePath)
+	if err == nil {
+		defer f.Close()
+		if info, err := readObjectInfo(f); err == nil {
+			// Check if the cached object has expired
+			if fileInfo, err := f.Stat(); err == nil && !isObjectExpired(info, fileInfo) {
+				b.lookup(f.Name())
+				return info, nil
+			} else {
+				// Object has expired, remove it from cache
+				b.delete(filePath)
+				os.Remove(filePath)
+			}
+		}
+	}
+
+	info, err := b.bucket.HeadObject(ctx, key)
+	if err != nil {
+		return storage.ObjectInfo{}, err
+	}
+
+	if info.Size <= 256*1024 && shouldCacheObject(info) {
+		body, _, err := b.getObjectFromBucket(ctx, key, filePath, 0, 0, false)
+		if err == nil {
+			body.Close()
+		}
+	}
+
+	return info, nil
+}
+
+func (b *cachedBucket) GetObject(ctx context.Context, key string, options ...storage.GetOption) (io.ReadCloser, storage.ObjectInfo, error) {
+	if err := context.Cause(ctx); err != nil {
+		return nil, storage.ObjectInfo{}, err
+	}
+	if err := storage.ValidObjectKey(key); err != nil {
+		return nil, storage.ObjectInfo{}, err
+	}
+
+	getOptions := storage.NewGetOptions(options...)
+	start, end, hasBytesRange := getOptions.BytesRange()
+	if hasBytesRange {
+		if err := storage.ValidObjectRange(key, start, end); err != nil {
+			return nil, storage.ObjectInfo{}, err
+		}
+	}
+
+	var cachedFileInfo os.FileInfo
+	var cachedInfo storage.ObjectInfo
+	var headInfo storage.ObjectInfo
+	var valid bool
+	var body io.ReadCloser
+
+	filePath := b.makeFilePath(key)
+	cachedFile, err := os.Open(filePath)
+	if err != nil {
+		goto headObject
+	}
+	defer func() {
+		if cachedFile != nil {
+			cachedFile.Close()
+		}
+	}()
+
+	cachedInfo, err = readObjectInfo(cachedFile)
+	if err != nil {
+		goto headObject
+	}
+
+	// Check if the cached object has expired
+	cachedFileInfo, err = cachedFile.Stat()
+	if err != nil || isObjectExpired(cachedInfo, cachedFileInfo) {
+		// Object has expired, remove it from cache
+		b.delete(filePath)
+		os.Remove(filePath)
+		goto headObject
+	}
+
+	// Check if the cached object needs revalidation
+	valid = !needsRevalidation(cachedInfo)
+	if !valid {
+		// If backend is unreachable or object didn't change, serve from cache
+		headInfo, err = b.bucket.HeadObject(ctx, key)
+		valid = err != nil || headInfo.ETag == cachedInfo.ETag
+		if !valid {
+			goto getObject // we already have the file info
+		}
+	}
+
+	defer func() {
+		cachedFile = nil
+	}()
+
+	body = io.ReadCloser(cachedFile)
+	if hasBytesRange {
+		body = bytesRangeReadCloser(cachedFile, start, end)
+	}
+	b.lookup(cachedFile.Name())
+	return body, cachedInfo, nil
+
+headObject:
+	headInfo, err = b.bucket.HeadObject(ctx, key)
+	if err != nil {
+		return nil, headInfo, err
+	}
+	if !shouldCacheObject(headInfo) {
+		return b.bucket.GetObject(ctx, key, options...)
+	}
+getObject:
+	return b.getObjectFromBucket(ctx, key, filePath, start, end, hasBytesRange)
+}
+
+func (b *cachedBucket) getObjectFromBucket(ctx context.Context, key, filePath string, start, end int64, hasBytesRange bool) (io.ReadCloser, storage.ObjectInfo, error) {
+	body, info, err := b.bucket.GetObject(ctx, key)
+	if err != nil {
+		return nil, storage.ObjectInfo{}, err
+	}
+
+	dirPath := filepath.Dir(filePath)
+	if err = os.Mkdir(dirPath, 0755); err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			err = nil
+		}
+	}
+	var f *os.File
+	if err == nil {
+		f, err = os.CreateTemp(dirPath, tempFilePattern)
+	}
+	if err != nil {
+		if hasBytesRange {
+			io.CopyN(io.Discard, body, start)
+			body = &struct {
+				io.LimitedReader
+				io.Closer
+			}{
+				LimitedReader: io.LimitedReader{R: body, N: end - start + 1},
+				Closer:        body,
+			}
+		}
+		return body, info, nil
+	}
+
+	closeFile := true
+	defer body.Close()
+	defer func() {
+		if closeFile {
+			f.Close()
+			os.Remove(f.Name())
+		} else {
+			os.Rename(f.Name(), filePath)
+		}
+	}()
+
+	if _, err := io.Copy(f, body); err != nil {
+		return nil, info, err
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return nil, info, err
+	}
+	if err := os.Chtimes(f.Name(), info.LastModified, info.LastModified); err != nil {
+		return nil, info, err
+	}
+	if err := writeObjectInfo(f, info); err != nil {
+		return nil, info, err
+	}
+
+	body = io.ReadCloser(f)
+	if hasBytesRange {
+		body = bytesRangeReadCloser(f, start, end)
+	}
+
+	b.lookup(f.Name())
+	closeFile = false
+	return body, info, nil
+}
+
+func (b *cachedBucket) PutObject(ctx context.Context, key string, value io.Reader, options ...storage.PutOption) (storage.ObjectInfo, error) {
+	if err := context.Cause(ctx); err != nil {
+		return storage.ObjectInfo{}, err
+	}
+	if err := storage.ValidObjectKey(key); err != nil {
+		return storage.ObjectInfo{}, err
+	}
+
+	filePath := b.makeFilePath(key)
+	dirPath := filepath.Dir(filePath)
+	tmpFile := (*os.File)(nil)
+	renameFile := false
+
+	if err := os.Mkdir(dirPath, 0755); err == nil || errors.Is(err, fs.ErrExist) {
+		tmpFile, err = os.CreateTemp(dirPath, tempFilePattern)
+		if err == nil {
+			defer func() {
+				tmpFile.Close()
+				if renameFile {
+					os.Rename(tmpFile.Name(), filePath)
+				} else {
+					os.Remove(tmpFile.Name())
+				}
+			}()
+
+			if _, err := io.Copy(tmpFile, value); err != nil {
+				return storage.ObjectInfo{}, err
+			}
+			if _, err := tmpFile.Seek(0, io.SeekStart); err != nil {
+				return storage.ObjectInfo{}, err
+			}
+
+			value = tmpFile
+		}
+	}
+
+	info, err := b.bucket.PutObject(ctx, key, value, options...)
+	if err != nil {
+		return info, err
+	}
+
+	// Only cache the object if it should be cached based on cache control headers
+	if tmpFile != nil && shouldCacheObject(info) {
+		if err := os.Chtimes(tmpFile.Name(), info.LastModified, info.LastModified); err != nil {
+			return info, nil
+		}
+		if err := writeObjectInfo(tmpFile, info); err != nil {
+			return info, nil
+		}
+		b.insert(filePath, info.Size)
+		renameFile = true
+	}
+	return info, err
+}
+
+func (b *cachedBucket) DeleteObject(ctx context.Context, key string) error {
+	if err := context.Cause(ctx); err != nil {
+		return err
+	}
+	if err := storage.ValidObjectKey(key); err != nil {
+		return err
+	}
+	filePath := b.makeFilePath(key)
+	b.delete(filePath)
+	os.Remove(filePath)
+	return b.bucket.DeleteObject(ctx, key)
+}
+
+func (b *cachedBucket) DeleteObjects(ctx context.Context, keys []string) error {
+	if err := context.Cause(ctx); err != nil {
+		return err
+	}
+	for _, key := range keys {
+		if err := storage.ValidObjectKey(key); err != nil {
+			return err
+		}
+	}
+	for _, key := range keys {
+		filePath := b.makeFilePath(key)
+		b.delete(filePath)
+		os.Remove(filePath)
+	}
+	return b.bucket.DeleteObjects(ctx, keys)
+}
+
+func (b *cachedBucket) ListObjects(ctx context.Context, options ...storage.ListOption) iter.Seq2[storage.Object, error] {
+	return b.bucket.ListObjects(ctx, options...)
+}
+
+func (b *cachedBucket) WatchObjects(ctx context.Context, options ...storage.ListOption) iter.Seq2[storage.Object, error] {
+	return b.bucket.WatchObjects(ctx, options...)
+}
+
+func (b *cachedBucket) makeFilePath(key string) string {
+	sha := sha256.Sum256([]byte(key))
+	return filepath.Join(b.tmpdir, fmt.Sprintf("%01X/%064x", sha[0:1], sha))
+}
+
+func (b *cachedBucket) PresignGetObject(ctx context.Context, key string, options ...storage.GetOption) (string, error) {
+	return b.bucket.PresignGetObject(ctx, key, options...)
+}
+
+func (b *cachedBucket) PresignPutObject(ctx context.Context, key string, options ...storage.PutOption) (string, error) {
+	return b.bucket.PresignPutObject(ctx, key, options...)
+}
+
+func (b *cachedBucket) PresignHeadObject(ctx context.Context, key string) (string, error) {
+	return b.bucket.PresignHeadObject(ctx, key)
+}
+
+func (b *cachedBucket) PresignDeleteObject(ctx context.Context, key string) (string, error) {
+	return b.bucket.PresignDeleteObject(ctx, key)
+}

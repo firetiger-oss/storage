@@ -1,0 +1,53 @@
+package cache
+
+import "time"
+
+type TTL[K comparable, V any] LRU[K, ttlEntry[V]]
+
+type ttlEntry[V any] struct {
+	value  V
+	expire time.Time
+}
+
+func (c *TTL[K, V]) lru() *LRU[K, ttlEntry[V]] {
+	return (*LRU[K, ttlEntry[V]])(c)
+}
+
+func (c *TTL[K, V]) Stat() Stat {
+	return c.lru().Stat()
+}
+
+func (c *TTL[K, V]) Clear() {
+	c.lru().Clear()
+}
+
+func (c *TTL[K, V]) Drop(ks ...K) {
+	c.lru().Drop(ks...)
+}
+
+func (c *TTL[K, V]) Load(key K, now time.Time, update bool, fetch func() (V, time.Time, error)) (value V, expire time.Time, err error) {
+	var promise *Promise[ttlEntry[V]]
+
+	c.mutex.Lock()
+	entry, ok := c.cache.Lookup(key)
+	if !ok || update || now.After(entry.expire) {
+		promise = c.lru().get(key, func() (int64, ttlEntry[V], error) {
+			value, expire, err := fetch()
+			if err != nil {
+				return 0, ttlEntry[V]{}, err
+			}
+			return 1, ttlEntry[V]{value: value, expire: expire}, nil
+		})
+	}
+	c.mutex.Unlock()
+
+	if promise != nil {
+		<-promise.ready
+		if promise.error != nil {
+			return value, expire, promise.error
+		}
+		entry = promise.value
+	}
+
+	return entry.value, entry.expire, nil
+}
