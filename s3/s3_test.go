@@ -4,8 +4,8 @@ import (
 	"testing"
 
 	"github.com/firetiger-oss/storage"
-	"github.com/firetiger-oss/storage/s3/fakes3"
 	storages3 "github.com/firetiger-oss/storage/s3"
+	"github.com/firetiger-oss/storage/s3/fakes3"
 	storagetest "github.com/firetiger-oss/storage/test"
 )
 
