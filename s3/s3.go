@@ -544,8 +544,17 @@ func (b *Bucket) PresignGetObject(ctx context.Context, key string, expiration ti
 
 	request, err := presignClient.PresignGetObject(ctx, newGetObjectInput(b.bucket, key, options...),
 		func(po *s3.PresignOptions) {
-			*po = b.presignOptions
-			po.Expires = expiration
+			// Don't overwrite the entire struct - preserve existing middleware
+			// Only copy specific fields from b.presignOptions if they're set
+			if b.presignOptions.Expires != 0 && expiration == 0 {
+				po.Expires = b.presignOptions.Expires
+			} else {
+				po.Expires = expiration
+			}
+			// Copy ClientOptions if set, appending to existing ones
+			if len(b.presignOptions.ClientOptions) > 0 {
+				po.ClientOptions = append(po.ClientOptions, b.presignOptions.ClientOptions...)
+			}
 		})
 	if err != nil {
 		return "", makeIcebergError(err)
@@ -565,8 +574,17 @@ func (b *Bucket) PresignPutObject(ctx context.Context, key string, expiration ti
 
 	request, err := presignClient.PresignPutObject(ctx, newPutObjectInput(b.bucket, key, options...),
 		func(po *s3.PresignOptions) {
-			*po = b.presignOptions
-			po.Expires = expiration
+			// Don't overwrite the entire struct - preserve existing middleware
+			// Only copy specific fields from b.presignOptions if they're set
+			if b.presignOptions.Expires != 0 && expiration == 0 {
+				po.Expires = b.presignOptions.Expires
+			} else {
+				po.Expires = expiration
+			}
+			// Copy ClientOptions if set, appending to existing ones
+			if len(b.presignOptions.ClientOptions) > 0 {
+				po.ClientOptions = append(po.ClientOptions, b.presignOptions.ClientOptions...)
+			}
 		})
 	if err != nil {
 		return "", makeIcebergError(err)
@@ -614,7 +632,17 @@ func (b *Bucket) loadPresignClient() (*s3.PresignClient, error) {
 		if !ok {
 			return nil, storage.ErrPresignNotSupported
 		}
-		return s3.NewPresignClient(s3Client, func(opts *s3.PresignOptions) { *opts = b.presignOptions }), nil
+		return s3.NewPresignClient(s3Client, func(opts *s3.PresignOptions) {
+			// Don't overwrite the entire struct - preserve existing middleware
+			// Only copy specific fields from b.presignOptions if they're set
+			if b.presignOptions.Expires != 0 {
+				opts.Expires = b.presignOptions.Expires
+			}
+			// Append ClientOptions if set, don't replace
+			if len(b.presignOptions.ClientOptions) > 0 {
+				opts.ClientOptions = append(opts.ClientOptions, b.presignOptions.ClientOptions...)
+			}
+		}), nil
 	})
 }
 
