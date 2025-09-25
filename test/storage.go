@@ -1573,7 +1573,7 @@ func testStoragePresign(t *testing.T, bucket storage.Bucket) {
 	key := "test-presign-object"
 
 	t.Run("GetObject", func(t *testing.T) {
-		url, err := bucket.PresignGetObject(ctx, key)
+		url, err := bucket.PresignGetObject(ctx, key, time.Hour)
 		if err != nil {
 			if !errors.Is(err, storage.ErrPresignNotSupported) {
 				t.Errorf("expected ErrPresignNotSupported or nil, got: %v", err)
@@ -1586,7 +1586,7 @@ func testStoragePresign(t *testing.T, bucket storage.Bucket) {
 	})
 
 	t.Run("PutObject", func(t *testing.T) {
-		url, err := bucket.PresignPutObject(ctx, key)
+		url, err := bucket.PresignPutObject(ctx, key, time.Hour)
 		if err != nil {
 			if !errors.Is(err, storage.ErrPresignNotSupported) {
 				t.Errorf("expected ErrPresignNotSupported or nil, got: %v", err)
@@ -1625,19 +1625,19 @@ func testStoragePresign(t *testing.T, bucket storage.Bucket) {
 	})
 
 	t.Run("invalid key", func(t *testing.T) {
-		_, err := bucket.PresignGetObject(ctx, "")
+		_, err := bucket.PresignGetObject(ctx, "", time.Hour)
 		if !errors.Is(err, storage.ErrInvalidObjectKey) {
 			t.Errorf("expected ErrInvalidObjectKey, got: %v", err)
 		}
 	})
 
 	t.Run("presign with options", func(t *testing.T) {
-		_, err := bucket.PresignGetObject(ctx, key, storage.BytesRange(0, 100))
+		_, err := bucket.PresignGetObject(ctx, key, time.Hour, storage.BytesRange(0, 100))
 		if err != nil && !errors.Is(err, storage.ErrPresignNotSupported) {
 			t.Errorf("PresignGetObject with options failed with unexpected error: %v", err)
 		}
 
-		_, err = bucket.PresignPutObject(ctx, key, storage.ContentType("text/plain"))
+		_, err = bucket.PresignPutObject(ctx, key, time.Hour, storage.ContentType("text/plain"))
 		if err != nil && !errors.Is(err, storage.ErrPresignNotSupported) {
 			t.Errorf("PresignPutObject with options failed with unexpected error: %v", err)
 		}

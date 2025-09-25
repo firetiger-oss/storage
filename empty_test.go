@@ -144,7 +144,7 @@ func TestEmptyBucket(t *testing.T) {
 			t.Errorf("expected context.Canceled for GetObject, got %v", err)
 		}
 
-		_, err = bucket.PresignGetObject(ctx, "test.txt")
+		_, err = bucket.PresignGetObject(ctx, "test.txt", time.Hour)
 		if !errors.Is(err, context.Canceled) {
 			t.Errorf("expected context.Canceled for PresignGetObject, got %v", err)
 		}
@@ -159,14 +159,14 @@ func TestEmptyBucket(t *testing.T) {
 	})
 
 	t.Run("PresignGetObject", func(t *testing.T) {
-		_, err := bucket.PresignGetObject(ctx, "test/object.txt")
+		_, err := bucket.PresignGetObject(ctx, "test/object.txt", time.Hour)
 		if !errors.Is(err, storage.ErrPresignNotSupported) {
 			t.Errorf("expected ErrPresignNotSupported for PresignGetObject, got %v", err)
 		}
 	})
 
 	t.Run("PresignPutObject", func(t *testing.T) {
-		_, err := bucket.PresignPutObject(ctx, "test/object.txt")
+		_, err := bucket.PresignPutObject(ctx, "test/object.txt", time.Hour)
 		if !errors.Is(err, storage.ErrBucketReadOnly) {
 			t.Errorf("expected ErrBucketReadOnly for PresignPutObject, got %v", err)
 		}

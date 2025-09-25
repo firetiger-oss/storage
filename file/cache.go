@@ -470,12 +470,12 @@ func (b *cachedBucket) makeFilePath(key string) string {
 	return filepath.Join(b.tmpdir, fmt.Sprintf("%01X/%064x", sha[0:1], sha))
 }
 
-func (b *cachedBucket) PresignGetObject(ctx context.Context, key string, options ...storage.GetOption) (string, error) {
-	return b.bucket.PresignGetObject(ctx, key, options...)
+func (b *cachedBucket) PresignGetObject(ctx context.Context, key string, expiration time.Duration, options ...storage.GetOption) (string, error) {
+	return b.bucket.PresignGetObject(ctx, key, expiration, options...)
 }
 
-func (b *cachedBucket) PresignPutObject(ctx context.Context, key string, options ...storage.PutOption) (string, error) {
-	return b.bucket.PresignPutObject(ctx, key, options...)
+func (b *cachedBucket) PresignPutObject(ctx context.Context, key string, expiration time.Duration, options ...storage.PutOption) (string, error) {
+	return b.bucket.PresignPutObject(ctx, key, expiration, options...)
 }
 
 func (b *cachedBucket) PresignHeadObject(ctx context.Context, key string) (string, error) {

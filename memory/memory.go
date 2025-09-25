@@ -449,14 +449,14 @@ func (b *Bucket) WatchObjects(ctx context.Context, options ...storage.ListOption
 	}
 }
 
-func (b *Bucket) PresignGetObject(ctx context.Context, key string, options ...storage.GetOption) (string, error) {
+func (b *Bucket) PresignGetObject(ctx context.Context, key string, expiration time.Duration, options ...storage.GetOption) (string, error) {
 	if err := storage.ValidObjectKey(key); err != nil {
 		return "", storage.ErrInvalidObjectKey
 	}
 	return "", storage.ErrPresignNotSupported
 }
 
-func (b *Bucket) PresignPutObject(ctx context.Context, key string, options ...storage.PutOption) (string, error) {
+func (b *Bucket) PresignPutObject(ctx context.Context, key string, expiration time.Duration, options ...storage.PutOption) (string, error) {
 	if err := storage.ValidObjectKey(key); err != nil {
 		return "", storage.ErrInvalidObjectKey
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"iter"
+	"time"
 
 	"github.com/firetiger-oss/storage/internal/oteltrace"
 	"go.opentelemetry.io/otel/attribute"
@@ -145,24 +146,24 @@ func (i *instrumentedBucket) WatchObjects(ctx context.Context, options ...ListOp
 	}
 }
 
-func (i *instrumentedBucket) PresignGetObject(ctx context.Context, key string, options ...GetOption) (string, error) {
+func (i *instrumentedBucket) PresignGetObject(ctx context.Context, key string, expiration time.Duration, options ...GetOption) (string, error) {
 	ctx, span := oteltrace.Start(ctx, "storage.Bucket.PresignGetObject",
 		attribute.String("storage.bucket.location", i.base.Location()),
 		attribute.String("storage.bucket.presign.key", key),
 	)
 	defer span.End()
-	url, err := i.base.PresignGetObject(ctx, key, options...)
+	url, err := i.base.PresignGetObject(ctx, key, expiration, options...)
 	oteltrace.RecordError(span, err)
 	return url, err
 }
 
-func (i *instrumentedBucket) PresignPutObject(ctx context.Context, key string, options ...PutOption) (string, error) {
+func (i *instrumentedBucket) PresignPutObject(ctx context.Context, key string, expiration time.Duration, options ...PutOption) (string, error) {
 	ctx, span := oteltrace.Start(ctx, "storage.Bucket.PresignPutObject",
 		attribute.String("storage.bucket.location", i.base.Location()),
 		attribute.String("storage.bucket.presign.key", key),
 	)
 	defer span.End()
-	url, err := i.base.PresignPutObject(ctx, key, options...)
+	url, err := i.base.PresignPutObject(ctx, key, expiration, options...)
 	oteltrace.RecordError(span, err)
 	return url, err
 }

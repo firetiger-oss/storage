@@ -532,7 +532,7 @@ func (b *Bucket) WatchObjects(ctx context.Context, options ...storage.ListOption
 	}
 }
 
-func (b *Bucket) PresignGetObject(ctx context.Context, key string, options ...storage.GetOption) (string, error) {
+func (b *Bucket) PresignGetObject(ctx context.Context, key string, expiration time.Duration, options ...storage.GetOption) (string, error) {
 	if err := storage.ValidObjectKey(key); err != nil {
 		return "", storage.ErrInvalidObjectKey
 	}
@@ -542,14 +542,18 @@ func (b *Bucket) PresignGetObject(ctx context.Context, key string, options ...st
 		return "", err
 	}
 
-	request, err := presignClient.PresignGetObject(ctx, newGetObjectInput(b.bucket, key, options...))
+	request, err := presignClient.PresignGetObject(ctx, newGetObjectInput(b.bucket, key, options...),
+		func(po *s3.PresignOptions) {
+			*po = b.presignOptions
+			po.Expires = expiration
+		})
 	if err != nil {
 		return "", makeIcebergError(err)
 	}
 	return request.URL, nil
 }
 
-func (b *Bucket) PresignPutObject(ctx context.Context, key string, options ...storage.PutOption) (string, error) {
+func (b *Bucket) PresignPutObject(ctx context.Context, key string, expiration time.Duration, options ...storage.PutOption) (string, error) {
 	if err := storage.ValidObjectKey(key); err != nil {
 		return "", storage.ErrInvalidObjectKey
 	}
@@ -559,7 +563,11 @@ func (b *Bucket) PresignPutObject(ctx context.Context, key string, options ...st
 		return "", err
 	}
 
-	request, err := presignClient.PresignPutObject(ctx, newPutObjectInput(b.bucket, key, options...))
+	request, err := presignClient.PresignPutObject(ctx, newPutObjectInput(b.bucket, key, options...),
+		func(po *s3.PresignOptions) {
+			*po = b.presignOptions
+			po.Expires = expiration
+		})
 	if err != nil {
 		return "", makeIcebergError(err)
 	}
