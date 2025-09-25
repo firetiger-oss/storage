@@ -6,6 +6,7 @@ import (
 	"iter"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/firetiger-oss/storage/uri"
 )
@@ -114,12 +115,12 @@ func (b *prefixedBucket) listOptions(options ...ListOption) []ListOption {
 	return prefixOptions
 }
 
-func (b *prefixedBucket) PresignGetObject(ctx context.Context, key string, options ...GetOption) (string, error) {
-	return b.bucket.PresignGetObject(ctx, b.prefix+key, options...)
+func (b *prefixedBucket) PresignGetObject(ctx context.Context, key string, expiration time.Duration, options ...GetOption) (string, error) {
+	return b.bucket.PresignGetObject(ctx, b.prefix+key, expiration, options...)
 }
 
-func (b *prefixedBucket) PresignPutObject(ctx context.Context, key string, options ...PutOption) (string, error) {
-	return b.bucket.PresignPutObject(ctx, b.prefix+key, options...)
+func (b *prefixedBucket) PresignPutObject(ctx context.Context, key string, expiration time.Duration, options ...PutOption) (string, error) {
+	return b.bucket.PresignPutObject(ctx, b.prefix+key, expiration, options...)
 }
 
 func (b *prefixedBucket) PresignHeadObject(ctx context.Context, key string) (string, error) {

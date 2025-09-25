@@ -5,6 +5,7 @@ import (
 	"context"
 	"io"
 	"iter"
+	"time"
 )
 
 // EmptyBucket returns a read-only bucket that contains no objects.
@@ -61,11 +62,11 @@ func (emptyBucket) WatchObjects(ctx context.Context, options ...ListOption) iter
 	}
 }
 
-func (emptyBucket) PresignGetObject(ctx context.Context, key string, options ...GetOption) (string, error) {
+func (emptyBucket) PresignGetObject(ctx context.Context, key string, expiration time.Duration, options ...GetOption) (string, error) {
 	return "", cmp.Or(context.Cause(ctx), ErrPresignNotSupported)
 }
 
-func (emptyBucket) PresignPutObject(ctx context.Context, key string, options ...PutOption) (string, error) {
+func (emptyBucket) PresignPutObject(ctx context.Context, key string, expiration time.Duration, options ...PutOption) (string, error) {
 	return "", cmp.Or(context.Cause(ctx), ErrBucketReadOnly)
 }
 

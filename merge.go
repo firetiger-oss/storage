@@ -7,6 +7,7 @@ import (
 	"io"
 	"iter"
 	"slices"
+	"time"
 
 	"github.com/achille-roussel/kway-go"
 	"github.com/firetiger-oss/storage/concurrent"
@@ -113,12 +114,12 @@ func (m *mergedBucket) WatchObjects(ctx context.Context, options ...ListOption) 
 	return kway.MergeFunc(compareObjects, sequences...)
 }
 
-func (m *mergedBucket) PresignGetObject(ctx context.Context, key string, options ...GetOption) (string, error) {
-	return m.buckets[0].PresignGetObject(ctx, key, options...)
+func (m *mergedBucket) PresignGetObject(ctx context.Context, key string, expiration time.Duration, options ...GetOption) (string, error) {
+	return m.buckets[0].PresignGetObject(ctx, key, expiration, options...)
 }
 
-func (m *mergedBucket) PresignPutObject(ctx context.Context, key string, options ...PutOption) (string, error) {
-	return m.buckets[0].PresignPutObject(ctx, key, options...)
+func (m *mergedBucket) PresignPutObject(ctx context.Context, key string, expiration time.Duration, options ...PutOption) (string, error) {
+	return m.buckets[0].PresignPutObject(ctx, key, expiration, options...)
 }
 
 func (m *mergedBucket) PresignHeadObject(ctx context.Context, key string) (string, error) {

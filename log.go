@@ -253,9 +253,9 @@ func (b *loggedBucket) WatchObjects(ctx context.Context, options ...ListOption) 
 	}
 }
 
-func (b *loggedBucket) PresignGetObject(ctx context.Context, key string, options ...GetOption) (string, error) {
+func (b *loggedBucket) PresignGetObject(ctx context.Context, key string, expiration time.Duration, options ...GetOption) (string, error) {
 	start := time.Now()
-	url, err := b.bucket.PresignGetObject(ctx, key, options...)
+	url, err := b.bucket.PresignGetObject(ctx, key, expiration, options...)
 
 	const op = "Presign"
 	attrMethod := slog.String("method", "GetObject")
@@ -274,9 +274,9 @@ func (b *loggedBucket) PresignGetObject(ctx context.Context, key string, options
 	return url, err
 }
 
-func (b *loggedBucket) PresignPutObject(ctx context.Context, key string, options ...PutOption) (string, error) {
+func (b *loggedBucket) PresignPutObject(ctx context.Context, key string, expiration time.Duration, options ...PutOption) (string, error) {
 	start := time.Now()
-	url, err := b.bucket.PresignPutObject(ctx, key, options...)
+	url, err := b.bucket.PresignPutObject(ctx, key, expiration, options...)
 
 	const op = "Presign"
 	attrMethod := slog.String("method", "PutObject")

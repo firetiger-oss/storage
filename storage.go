@@ -117,10 +117,12 @@ type Bucket interface {
 	WatchObjects(ctx context.Context, options ...ListOption) iter.Seq2[Object, error]
 
 	// PresignGetObject generates a presigned URL for getting an object.
-	PresignGetObject(ctx context.Context, key string, options ...GetOption) (string, error)
+	// The expiration parameter specifies how long the presigned URL will remain valid.
+	PresignGetObject(ctx context.Context, key string, expiration time.Duration, options ...GetOption) (string, error)
 
 	// PresignPutObject generates a presigned URL for putting an object.
-	PresignPutObject(ctx context.Context, key string, options ...PutOption) (string, error)
+	// The expiration parameter specifies how long the presigned URL will remain valid.
+	PresignPutObject(ctx context.Context, key string, expiration time.Duration, options ...PutOption) (string, error)
 
 	// PresignHeadObject generates a presigned URL for getting object metadata.
 	PresignHeadObject(ctx context.Context, key string) (string, error)

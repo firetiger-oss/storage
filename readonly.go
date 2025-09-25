@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"iter"
+	"time"
 )
 
 func ReadOnlyBucket(bucket Bucket) Bucket {
@@ -54,11 +55,11 @@ func (b *readOnlyBucket) WatchObjects(ctx context.Context, options ...ListOption
 	return b.bucket.WatchObjects(ctx, options...)
 }
 
-func (b *readOnlyBucket) PresignGetObject(ctx context.Context, key string, options ...GetOption) (string, error) {
-	return b.bucket.PresignGetObject(ctx, key, options...)
+func (b *readOnlyBucket) PresignGetObject(ctx context.Context, key string, expiration time.Duration, options ...GetOption) (string, error) {
+	return b.bucket.PresignGetObject(ctx, key, expiration, options...)
 }
 
-func (b *readOnlyBucket) PresignPutObject(ctx context.Context, key string, options ...PutOption) (string, error) {
+func (b *readOnlyBucket) PresignPutObject(ctx context.Context, key string, expiration time.Duration, options ...PutOption) (string, error) {
 	return "", ErrBucketReadOnly
 }
 

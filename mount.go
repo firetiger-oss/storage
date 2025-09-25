@@ -8,6 +8,7 @@ import (
 	"iter"
 	"slices"
 	"strings"
+	"time"
 )
 
 // WithMount returns an adapter that mounts a bucket at a specific prefix.
@@ -210,18 +211,18 @@ func (b *mountedBucket) WatchObjects(ctx context.Context, options ...ListOption)
 	}
 }
 
-func (b *mountedBucket) PresignGetObject(ctx context.Context, key string, options ...GetOption) (string, error) {
+func (b *mountedBucket) PresignGetObject(ctx context.Context, key string, expiration time.Duration, options ...GetOption) (string, error) {
 	if strings.HasPrefix(key, b.mount.prefix) {
-		return b.mount.PresignGetObject(ctx, key, options...)
+		return b.mount.PresignGetObject(ctx, key, expiration, options...)
 	}
-	return b.bucket.PresignGetObject(ctx, key, options...)
+	return b.bucket.PresignGetObject(ctx, key, expiration, options...)
 }
 
-func (b *mountedBucket) PresignPutObject(ctx context.Context, key string, options ...PutOption) (string, error) {
+func (b *mountedBucket) PresignPutObject(ctx context.Context, key string, expiration time.Duration, options ...PutOption) (string, error) {
 	if strings.HasPrefix(key, b.mount.prefix) {
-		return b.mount.PresignPutObject(ctx, key, options...)
+		return b.mount.PresignPutObject(ctx, key, expiration, options...)
 	}
-	return b.bucket.PresignPutObject(ctx, key, options...)
+	return b.bucket.PresignPutObject(ctx, key, expiration, options...)
 }
 
 func (b *mountedBucket) PresignHeadObject(ctx context.Context, key string) (string, error) {
@@ -373,24 +374,24 @@ func (b *mountedPrefixBucket) scopeError(err error) error {
 	return fmt.Errorf("%s: %w", b.prefix, err)
 }
 
-func (b *mountedPrefixBucket) PresignGetObject(ctx context.Context, key string, options ...GetOption) (string, error) {
+func (b *mountedPrefixBucket) PresignGetObject(ctx context.Context, key string, expiration time.Duration, options ...GetOption) (string, error) {
 	if !strings.HasPrefix(key, b.prefix) {
 		return "", fmt.Errorf("%s: %w", key, ErrObjectNotFound)
 	}
 	strippedKey := strings.TrimPrefix(key, b.prefix)
-	url, err := b.bucket.PresignGetObject(ctx, strippedKey, options...)
+	url, err := b.bucket.PresignGetObject(ctx, strippedKey, expiration, options...)
 	if err != nil {
 		err = b.scopeError(err)
 	}
 	return url, err
 }
 
-func (b *mountedPrefixBucket) PresignPutObject(ctx context.Context, key string, options ...PutOption) (string, error) {
+func (b *mountedPrefixBucket) PresignPutObject(ctx context.Context, key string, expiration time.Duration, options ...PutOption) (string, error) {
 	if !strings.HasPrefix(key, b.prefix) {
 		return "", fmt.Errorf("%s: %w", key, ErrObjectNotFound)
 	}
 	strippedKey := strings.TrimPrefix(key, b.prefix)
-	url, err := b.bucket.PresignPutObject(ctx, strippedKey, options...)
+	url, err := b.bucket.PresignPutObject(ctx, strippedKey, expiration, options...)
 	if err != nil {
 		err = b.scopeError(err)
 	}

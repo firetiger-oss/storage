@@ -408,7 +408,7 @@ func (b *Bucket) WatchObjects(ctx context.Context, options ...storage.ListOption
 	}
 }
 
-func (b *Bucket) PresignGetObject(ctx context.Context, key string, options ...storage.GetOption) (string, error) {
+func (b *Bucket) PresignGetObject(ctx context.Context, key string, expiration time.Duration, options ...storage.GetOption) (string, error) {
 	if err := storage.ValidObjectKey(key); err != nil {
 		return "", storage.ErrInvalidObjectKey
 	}
@@ -417,7 +417,7 @@ func (b *Bucket) PresignGetObject(ctx context.Context, key string, options ...st
 	opts := &gcloud.SignedURLOptions{
 		Scheme:  gcloud.SigningSchemeV4,
 		Method:  "GET",
-		Expires: time.Now().Add(5 * time.Minute), // Default 5 minute expiration
+		Expires: time.Now().Add(expiration),
 	}
 
 	// Add range header if specified
@@ -432,7 +432,7 @@ func (b *Bucket) PresignGetObject(ctx context.Context, key string, options ...st
 	return url, nil
 }
 
-func (b *Bucket) PresignPutObject(ctx context.Context, key string, options ...storage.PutOption) (string, error) {
+func (b *Bucket) PresignPutObject(ctx context.Context, key string, expiration time.Duration, options ...storage.PutOption) (string, error) {
 	if err := storage.ValidObjectKey(key); err != nil {
 		return "", storage.ErrInvalidObjectKey
 	}
@@ -441,7 +441,7 @@ func (b *Bucket) PresignPutObject(ctx context.Context, key string, options ...st
 	opts := &gcloud.SignedURLOptions{
 		Scheme:      gcloud.SigningSchemeV4,
 		Method:      "PUT",
-		Expires:     time.Now().Add(5 * time.Minute), // Default 5 minute expiration
+		Expires:     time.Now().Add(expiration),
 		ContentType: putOptions.ContentType(),
 	}
 

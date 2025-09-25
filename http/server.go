@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/firetiger-oss/storage"
 	"github.com/firetiger-oss/storage/internal/sequtil"
@@ -281,7 +282,7 @@ func handleGET(w http.ResponseWriter, r *http.Request, b storage.Bucket, h *Hand
 		}
 
 		if h.presignRedirect {
-			presignedURL, err := b.PresignGetObject(r.Context(), makeKey(r.URL.Path), options...)
+			presignedURL, err := b.PresignGetObject(r.Context(), makeKey(r.URL.Path), time.Hour, options...)
 			if err != nil {
 				writeError(w, err)
 				return
@@ -340,7 +341,7 @@ func handlePUT(w http.ResponseWriter, r *http.Request, b storage.Bucket, h *Hand
 	}
 
 	if h.presignRedirect {
-		presignedURL, err := b.PresignPutObject(r.Context(), makeKey(r.URL.Path), options...)
+		presignedURL, err := b.PresignPutObject(r.Context(), makeKey(r.URL.Path), time.Hour, options...)
 		if err != nil {
 			writeError(w, err)
 			return

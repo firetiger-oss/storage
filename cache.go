@@ -5,6 +5,7 @@ import (
 	"context"
 	"io"
 	"iter"
+	"time"
 
 	"github.com/firetiger-oss/storage/cache"
 )
@@ -265,12 +266,12 @@ func (c *cachedBucket) WatchObjects(ctx context.Context, options ...ListOption) 
 	return c.bucket.WatchObjects(ctx, options...)
 }
 
-func (c *cachedBucket) PresignGetObject(ctx context.Context, key string, options ...GetOption) (string, error) {
-	return c.bucket.PresignGetObject(ctx, key, options...)
+func (c *cachedBucket) PresignGetObject(ctx context.Context, key string, expiration time.Duration, options ...GetOption) (string, error) {
+	return c.bucket.PresignGetObject(ctx, key, expiration, options...)
 }
 
-func (c *cachedBucket) PresignPutObject(ctx context.Context, key string, options ...PutOption) (string, error) {
-	return c.bucket.PresignPutObject(ctx, key, options...)
+func (c *cachedBucket) PresignPutObject(ctx context.Context, key string, expiration time.Duration, options ...PutOption) (string, error) {
+	return c.bucket.PresignPutObject(ctx, key, expiration, options...)
 }
 
 func (c *cachedBucket) PresignHeadObject(ctx context.Context, key string) (string, error) {
