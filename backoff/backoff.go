@@ -89,6 +89,31 @@ func FullJitter(backoff Strategy) Strategy {
 	})
 }
 
+// BoundedJitter wraps a backoff Strategy to add random jitter while enforcing
+// a minimum delay floor. The jittered delay will be between minJitter and the
+// original strategy's delay. This prevents CPU spinning from zero-delay iterations
+// while still providing randomization to avoid thundering herd problems.
+//
+// The minJitter parameter sets the absolute minimum delay that will be returned,
+// regardless of the jitter calculation. This is useful for polling loops where
+// you want randomization but need to prevent excessive CPU usage.
+//
+// Example: If minJitter is 100ms and the wrapped strategy returns 1000ms,
+// BoundedJitter returns a random duration between 100ms and 1000ms.
+func BoundedJitter(backoff Strategy, minJitter time.Duration) Strategy {
+	return StrategyFunc(func(attempt int, minDelay, maxDelay time.Duration) time.Duration {
+		delay := backoff.Backoff(attempt, minDelay, maxDelay)
+		if delay <= minJitter {
+			return minJitter
+		}
+		jittered := time.Duration(rand.Int64N(int64(delay)))
+		if jittered < minJitter {
+			return minJitter
+		}
+		return jittered
+	})
+}
+
 // Seq returns an iterator that yields retry attempts with appropriate delays.
 // The iterator yields (time.Time, error) pairs where:
 //   - time.Time is the current time when the attempt should be made

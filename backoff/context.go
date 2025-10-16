@@ -90,8 +90,9 @@ func MaxDelayFromContext(ctx context.Context) time.Duration {
 
 // StrategyFromContext extracts the backoff strategy from the context.
 // If no strategy is set in the context, returns the default strategy:
-// FullJitter(Exponential()), which provides exponential backoff with
-// random jitter to prevent thundering herd problems.
+// BoundedJitter(Exponential(), DefaultMinDelay), which provides exponential
+// backoff with random jitter that respects a minimum delay floor to prevent
+// CPU spinning from zero-delay iterations.
 //
 // This function is typically used internally by Seq(),
 // but can be useful for custom retry implementations.
@@ -100,5 +101,5 @@ func StrategyFromContext(ctx context.Context) Strategy {
 	if ok {
 		return strategy
 	}
-	return FullJitter(Exponential())
+	return BoundedJitter(Exponential(), DefaultMinDelay)
 }
