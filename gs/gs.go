@@ -530,6 +530,9 @@ func makeIcebergError(err error) error {
 		if gcsErr.Code == http.StatusUnauthorized || gcsErr.Code == http.StatusForbidden {
 			return errors.Join(storage.ErrPresignNotSupported, err)
 		}
+		if gcsErr.Code == http.StatusTooManyRequests {
+			return storage.ErrTooManyRequests
+		}
 	}
 
 	// Handle specific GCS signing validation errors (these are plain errors.New() calls)
