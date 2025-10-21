@@ -25,6 +25,7 @@ var (
 	ErrInvalidObjectTag    = errors.New("invalid object tag")
 	ErrInvalidRange        = errors.New("offset out of range")
 	ErrPresignNotSupported = errors.New("presigned URLs not supported")
+	ErrTooManyRequests     = errors.New("too many requests")
 )
 
 const (
