@@ -531,7 +531,7 @@ func makeIcebergError(err error) error {
 			return errors.Join(storage.ErrPresignNotSupported, err)
 		}
 		if gcsErr.Code == http.StatusTooManyRequests {
-			return storage.ErrTooManyRequests
+			return errors.Join(storage.ErrTooManyRequests, err)
 		}
 	}
 
