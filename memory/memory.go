@@ -2,6 +2,7 @@ package memory
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/md5"
 	"encoding/hex"
@@ -279,22 +280,21 @@ func (b *Bucket) DeleteObject(ctx context.Context, key string) error {
 	return nil
 }
 
-func (b *Bucket) DeleteObjects(ctx context.Context, keys []string) error {
-	if err := context.Cause(ctx); err != nil {
-		return err
-	}
-	for _, key := range keys {
-		if err := storage.ValidObjectKey(key); err != nil {
-			return err
+func (b *Bucket) DeleteObjects(ctx context.Context, objects iter.Seq2[string, error]) iter.Seq2[string, error] {
+	return func(yield func(string, error) bool) {
+		for key, err := range objects {
+			err = cmp.Or(context.Cause(ctx), storage.ValidObjectKey(key))
+			if err == nil {
+				b.mutex.Lock()
+				delete(b.objects, key)
+				b.notify(key)
+				b.mutex.Unlock()
+			}
+			if !yield(key, err) {
+				return
+			}
 		}
 	}
-	b.mutex.Lock()
-	for _, key := range keys {
-		delete(b.objects, key)
-	}
-	b.notify(keys...)
-	b.mutex.Unlock()
-	return nil
 }
 
 func (b *Bucket) notify(keys ...string) {

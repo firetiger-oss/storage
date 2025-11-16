@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/firetiger-oss/storage"
+	"github.com/firetiger-oss/storage/internal/sequtil"
 )
 
 func TestEmptyBucket(t *testing.T) {
@@ -80,9 +81,11 @@ func TestEmptyBucket(t *testing.T) {
 
 	t.Run("DeleteObjects", func(t *testing.T) {
 		keys := []string{"test/object1.txt", "test/object2.txt"}
-		err := bucket.DeleteObjects(ctx, keys)
-		if !errors.Is(err, storage.ErrBucketReadOnly) {
-			t.Errorf("expected ErrBucketReadOnly for DeleteObjects, got %v", err)
+		results := bucket.DeleteObjects(ctx, sequtil.Values(keys))
+		for _, err := range results {
+			if !errors.Is(err, storage.ErrBucketReadOnly) {
+				t.Errorf("expected ErrBucketReadOnly for DeleteObjects, got %v", err)
+			}
 		}
 	})
 

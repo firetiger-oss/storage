@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/firetiger-oss/storage"
+	"github.com/firetiger-oss/storage/internal/sequtil"
 	"github.com/firetiger-oss/storage/memory"
 	"github.com/firetiger-oss/storage/test"
 )
@@ -134,8 +135,12 @@ func TestMountDeleteObjects(t *testing.T) {
 		t.Fatal("unexpected error:", err)
 	}
 
-	if err := bucket.DeleteObjects(ctx, []string{"docs/readme.txt", "config.yaml"}); err != nil {
-		t.Fatal("unexpected error:", err)
+	// Delete objects using iterator API
+	results := bucket.DeleteObjects(ctx, sequtil.Values([]string{"docs/readme.txt", "config.yaml"}))
+	for key, err := range results {
+		if err != nil {
+			t.Fatalf("unexpected error deleting object %s: %v", key, err)
+		}
 	}
 
 	if _, _, err := base.GetObject(ctx, "docs/readme.txt"); !errors.Is(err, storage.ErrObjectNotFound) {

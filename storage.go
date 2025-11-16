@@ -101,9 +101,12 @@ type Bucket interface {
 	// an error if there is nothing there.
 	DeleteObject(ctx context.Context, key string) error
 
-	// DeleteObjects is like DeleteObject, but for multiple keys
-	// at once.
-	DeleteObjects(ctx context.Context, keys []string) error
+	// DeleteObjects deletes multiple objects. It consumes the input sequence
+	// of object keys and yields results for each deletion. The output sequence
+	// yields (key, nil) for successful deletions and (key, error) for failures.
+	// Input errors are propagated immediately. The stream must be consumed to
+	// drive the deletion process.
+	DeleteObjects(ctx context.Context, objects iter.Seq2[string, error]) iter.Seq2[string, error]
 
 	// ListObjects gathers a list of abbreviated metadata for all
 	// objects in a bucket, or under a key prefix (set through a
@@ -335,66 +338,110 @@ func DeleteObjectAt(ctx context.Context, registry Registry, objectURI string) er
 	return bucket.DeleteObject(ctx, objectKey)
 }
 
-func DeleteObjects(ctx context.Context, objectURIs []string) error {
-	return DeleteObjectsAt(ctx, DefaultRegistry(), objectURIs)
+func DeleteObjects(ctx context.Context, objects iter.Seq2[string, error]) iter.Seq2[string, error] {
+	return DeleteObjectsAt(ctx, DefaultRegistry(), objects)
 }
 
-func DeleteObjectsAt(ctx context.Context, registry Registry, objectURIs []string) error {
-	type bucketURI struct {
-		bucketType, bucketName string
-	}
-
-	type bucketDeletes struct {
-		bucket Bucket
-		keys   []string
-	}
-
-	if len(objectURIs) == 0 {
-		return nil
-	}
-
-	deletes := map[bucketURI]*bucketDeletes{}
-
-	for _, objectURI := range objectURIs {
-		bucketType, bucketName, objectKey := uri.Split(objectURI)
-		bucket, err := registry.LoadBucket(ctx, uri.Join(bucketType, bucketName))
-		if err != nil {
-			return err
+func DeleteObjectsAt(ctx context.Context, registry Registry, objects iter.Seq2[string, error]) iter.Seq2[string, error] {
+	return func(yield func(string, error) bool) {
+		type result struct {
+			key string
+			err error
 		}
-		bucketKey := bucketURI{bucketType, bucketName}
-		if del, ok := deletes[bucketKey]; ok {
-			del.keys = append(del.keys, objectKey)
-		} else {
-			deletes[bucketKey] = &bucketDeletes{
-				bucket: bucket,
-				keys:   []string{objectKey},
+
+		resch := make(chan result)
+		group := new(sync.WaitGroup)
+		group.Add(1)
+
+		ctx, cancel := context.WithCancel(ctx)
+		defer cancel()
+
+		go func() {
+			defer group.Done()
+
+			type bucketURI struct {
+				bucketType, bucketName string
+			}
+
+			type bucketChannel struct {
+				keys chan<- string
+				done <-chan struct{}
+			}
+
+			buckets := make(map[bucketURI]bucketChannel)
+			defer func() {
+				for _, ch := range buckets {
+					close(ch.keys)
+				}
+			}()
+
+			for key, err := range objects {
+				if err != nil {
+					resch <- result{key, err}
+					continue
+				}
+
+				bucketType, bucketName, objectKey := uri.Split(key)
+				bucketKey := bucketURI{bucketType, bucketName}
+				bucketChan, ok := buckets[bucketKey]
+				if !ok {
+					bucket, err := registry.LoadBucket(ctx, uri.Join(bucketType, bucketName))
+					if err != nil {
+						resch <- result{key, err}
+						continue
+					}
+					keys := make(chan string, 10)
+					done := make(chan struct{})
+					bucketChan = bucketChannel{keys, done}
+					buckets[bucketKey] = bucketChan
+
+					group.Add(1)
+					go func() {
+						defer group.Done()
+						defer close(done)
+
+						for key, err := range bucket.DeleteObjects(ctx, func(yield func(string, error) bool) {
+							for key := range keys {
+								if !yield(key, nil) {
+									return
+								}
+							}
+						}) {
+							if key != "" {
+								key = uri.Join(bucketType, bucketName, key)
+							}
+							resch <- result{key, err}
+						}
+					}()
+				}
+
+				select {
+				case bucketChan.keys <- objectKey:
+				case <-bucketChan.done:
+				case <-ctx.Done():
+					resch <- result{key, context.Cause(ctx)}
+					return
+				}
+			}
+		}()
+
+		go func() {
+			group.Wait()
+			close(resch)
+		}()
+
+		defer func() {
+			for range resch {
+			}
+		}()
+
+		for r := range resch {
+			if !yield(r.key, r.err) {
+				cancel()
+				return
 			}
 		}
 	}
-
-	waitGroup := sync.WaitGroup{}
-	errChan := make(chan error)
-
-	for _, del := range deletes {
-		waitGroup.Add(1)
-		go func() {
-			defer waitGroup.Done()
-			errChan <- del.bucket.DeleteObjects(ctx, del.keys)
-		}()
-	}
-
-	go func() {
-		waitGroup.Wait()
-		close(errChan)
-	}()
-
-	var errs []error
-	for err := range errChan {
-		if err != nil {
-			errs = append(errs, err)
-		}
-	}
-	return errors.Join(errs...)
 }
 
 func Location(location, path string) string {

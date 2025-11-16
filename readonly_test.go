@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/firetiger-oss/storage"
+	"github.com/firetiger-oss/storage/internal/sequtil"
 	"github.com/firetiger-oss/storage/memory"
 )
 
@@ -20,7 +21,10 @@ func TestReadOnlyBucket(t *testing.T) {
 	ctx := t.Context()
 	assert(bucket.Create(ctx))
 	assert(bucket.DeleteObject(ctx, "key"))
-	assert(bucket.DeleteObjects(ctx, []string{"key1", "key2"}))
+	// Test DeleteObjects returns error for each key
+	for _, err := range bucket.DeleteObjects(ctx, sequtil.Values([]string{"key1", "key2"})) {
+		assert(err)
+	}
 	_, err := bucket.PutObject(ctx, "key", strings.NewReader("value"))
 	assert(err)
 }

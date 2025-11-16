@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/firetiger-oss/storage"
+	"github.com/firetiger-oss/storage/internal/sequtil"
 	"github.com/firetiger-oss/storage/memory"
 	storagetest "github.com/firetiger-oss/storage/test"
 )
@@ -271,12 +272,18 @@ func TestDeleteObjects(t *testing.T) {
 
 	ctx := t.Context()
 
-	if err := storage.DeleteObjects(ctx, []string{
+	// Delete objects using iterator API
+	results := storage.DeleteObjects(ctx, sequtil.Values([]string{
 		"TestDeleteObjects1://:memory:/key-1",
 		"TestDeleteObjects1://:memory:/key-3",
 		"TestDeleteObjects2://:memory:/key-2",
-	}); err != nil {
-		t.Fatal("unexpected error deleting objects:", err)
+	}))
+
+	// Consume results and check for errors
+	for key, err := range results {
+		if err != nil {
+			t.Fatalf("unexpected error deleting object %s: %v", key, err)
+		}
 	}
 
 	for _, key := range []string{
@@ -285,6 +292,326 @@ func TestDeleteObjects(t *testing.T) {
 	} {
 		if _, _, err := storage.GetObject(ctx, key); !errors.Is(err, storage.ErrObjectNotFound) {
 			t.Fatal("expected object not found error:", err)
+		}
+	}
+}
+
+func TestDeleteObjectsErrorHandling(t *testing.T) {
+	bucket := memory.NewBucket(
+		&memory.Entry{Key: "key-1", Value: []byte("value-1")},
+	)
+	storage.Register("TestDeleteObjectsErrorHandling", storage.SingleBucketRegistry(bucket))
+
+	ctx := t.Context()
+
+	t.Run("invalid URI format", func(t *testing.T) {
+		results := storage.DeleteObjects(ctx, sequtil.Values([]string{
+			"invalid-uri-no-scheme",
+		}))
+
+		for key, err := range results {
+			if err == nil {
+				t.Fatalf("expected error for invalid URI %s, got nil", key)
+			}
+		}
+	})
+
+	t.Run("non-existent bucket", func(t *testing.T) {
+		results := storage.DeleteObjects(ctx, sequtil.Values([]string{
+			"NonExistentBucket://:memory:/key-1",
+		}))
+
+		var gotError bool
+		for _, err := range results {
+			if err != nil {
+				gotError = true
+				if !errors.Is(err, storage.ErrBucketNotFound) {
+					t.Errorf("expected ErrBucketNotFound, got %v", err)
+				}
+			}
+		}
+		if !gotError {
+			t.Fatal("expected error for non-existent bucket")
+		}
+	})
+
+	t.Run("input iterator with errors", func(t *testing.T) {
+		inputError := errors.New("input error")
+		results := storage.DeleteObjects(ctx, func(yield func(string, error) bool) {
+			yield("TestDeleteObjectsErrorHandling://:memory:/key-1", nil)
+			yield("", inputError)
+			yield("TestDeleteObjectsErrorHandling://:memory:/key-2", nil)
+		})
+
+		var foundInputError bool
+		for _, err := range results {
+			if errors.Is(err, inputError) {
+				foundInputError = true
+			}
+		}
+		if !foundInputError {
+			t.Fatal("expected to receive input error in results")
+		}
+	})
+
+	t.Run("invalid object key", func(t *testing.T) {
+		results := storage.DeleteObjects(ctx, sequtil.Values([]string{
+			"TestDeleteObjectsErrorHandling://:memory:/../invalid",
+		}))
+
+		var gotError bool
+		for _, err := range results {
+			if err != nil {
+				gotError = true
+			}
+		}
+		if !gotError {
+			t.Fatal("expected error for invalid object key")
+		}
+	})
+}
+
+func TestDeleteObjectsContextCancellation(t *testing.T) {
+	bucket := memory.NewBucket()
+	// Add many objects
+	for i := 0; i < 100; i++ {
+		key := "key-" + string(rune('A'+i))
+		bucket.PutObject(context.Background(), key, strings.NewReader("value"))
+	}
+	storage.Register("TestDeleteObjectsContextCancellation", storage.SingleBucketRegistry(bucket))
+
+	t.Run("cancel during deletion", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+
+		keys := make([]string, 100)
+		for i := 0; i < 100; i++ {
+			keys[i] = "TestDeleteObjectsContextCancellation://:memory:/key-" + string(rune('A'+i))
+		}
+
+		results := storage.DeleteObjects(ctx, sequtil.Values(keys))
+
+		// Read a few results, then cancel
+		count := 0
+		for range results {
+			count++
+			if count == 5 {
+				cancel()
+			}
+		}
+
+		// Should have gotten at least some results before cancellation
+		if count < 5 {
+			t.Errorf("expected at least 5 results before cancellation, got %d", count)
+		}
+	})
+}
+
+func TestDeleteObjectsEdgeCases(t *testing.T) {
+	ctx := t.Context()
+
+	t.Run("empty iterator", func(t *testing.T) {
+		results := storage.DeleteObjects(ctx, sequtil.Values([]string{}))
+
+		count := 0
+		for range results {
+			count++
+		}
+		if count != 0 {
+			t.Errorf("expected 0 results for empty iterator, got %d", count)
+		}
+	})
+
+	t.Run("single object", func(t *testing.T) {
+		bucket := memory.NewBucket(
+			&memory.Entry{Key: "key-1", Value: []byte("value-1")},
+		)
+		storage.Register("TestDeleteObjectsEdgeCasesSingle", storage.SingleBucketRegistry(bucket))
+
+		results := storage.DeleteObjects(ctx, sequtil.Values([]string{
+			"TestDeleteObjectsEdgeCasesSingle://:memory:/key-1",
+		}))
+
+		count := 0
+		for _, err := range results {
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			count++
+		}
+		if count != 1 {
+			t.Errorf("expected 1 result, got %d", count)
+		}
+	})
+
+	t.Run("all objects from same bucket", func(t *testing.T) {
+		bucket := memory.NewBucket(
+			&memory.Entry{Key: "key-1", Value: []byte("value-1")},
+			&memory.Entry{Key: "key-2", Value: []byte("value-2")},
+			&memory.Entry{Key: "key-3", Value: []byte("value-3")},
+		)
+		storage.Register("TestDeleteObjectsEdgeCasesSame", storage.SingleBucketRegistry(bucket))
+
+		results := storage.DeleteObjects(ctx, sequtil.Values([]string{
+			"TestDeleteObjectsEdgeCasesSame://:memory:/key-1",
+			"TestDeleteObjectsEdgeCasesSame://:memory:/key-2",
+			"TestDeleteObjectsEdgeCasesSame://:memory:/key-3",
+		}))
+
+		count := 0
+		for _, err := range results {
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			count++
+		}
+		if count != 3 {
+			t.Errorf("expected 3 results, got %d", count)
+		}
+	})
+
+	t.Run("objects distributed across many buckets", func(t *testing.T) {
+		for i := 1; i <= 10; i++ {
+			bucket := memory.NewBucket(
+				&memory.Entry{Key: "key-1", Value: []byte("value-1")},
+			)
+			storage.Register("TestDeleteObjectsEdgeCasesMany"+string(rune('0'+i)), storage.SingleBucketRegistry(bucket))
+		}
+
+		keys := make([]string, 10)
+		for i := 1; i <= 10; i++ {
+			keys[i-1] = "TestDeleteObjectsEdgeCasesMany" + string(rune('0'+i)) + "://:memory:/key-1"
+		}
+
+		results := storage.DeleteObjects(ctx, sequtil.Values(keys))
+
+		count := 0
+		for _, err := range results {
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			count++
+		}
+		if count != 10 {
+			t.Errorf("expected 10 results, got %d", count)
+		}
+	})
+}
+
+func TestDeleteObjectsStreaming(t *testing.T) {
+	ctx := t.Context()
+
+	t.Run("early termination", func(t *testing.T) {
+		bucket := memory.NewBucket(
+			&memory.Entry{Key: "key-1", Value: []byte("value-1")},
+			&memory.Entry{Key: "key-2", Value: []byte("value-2")},
+			&memory.Entry{Key: "key-3", Value: []byte("value-3")},
+		)
+		storage.Register("TestDeleteObjectsStreamingEarly", storage.SingleBucketRegistry(bucket))
+
+		results := storage.DeleteObjects(ctx, sequtil.Values([]string{
+			"TestDeleteObjectsStreamingEarly://:memory:/key-1",
+			"TestDeleteObjectsStreamingEarly://:memory:/key-2",
+			"TestDeleteObjectsStreamingEarly://:memory:/key-3",
+		}))
+
+		count := 0
+		for range results {
+			count++
+			if count >= 2 {
+				break // Stop early
+			}
+		}
+		if count != 2 {
+			t.Errorf("expected to read 2 results before stopping, got %d", count)
+		}
+	})
+
+	t.Run("large number of objects", func(t *testing.T) {
+		bucket := memory.NewBucket()
+		// Add 100 objects
+		for i := 0; i < 100; i++ {
+			key := "key-" + string(rune('A'+i))
+			bucket.PutObject(context.Background(), key, strings.NewReader("value"))
+		}
+		storage.Register("TestDeleteObjectsStreamingLarge", storage.SingleBucketRegistry(bucket))
+
+		keys := make([]string, 100)
+		for i := 0; i < 100; i++ {
+			keys[i] = "TestDeleteObjectsStreamingLarge://:memory:/key-" + string(rune('A'+i))
+		}
+
+		results := storage.DeleteObjects(ctx, sequtil.Values(keys))
+
+		count := 0
+		for _, err := range results {
+			if err != nil {
+				t.Fatalf("unexpected error at count %d: %v", count, err)
+			}
+			count++
+		}
+		if count != 100 {
+			t.Errorf("expected 100 results, got %d", count)
+		}
+	})
+}
+
+func TestDeleteObjectsConcurrency(t *testing.T) {
+	bucket1 := memory.NewBucket(
+		&memory.Entry{Key: "key-1", Value: []byte("value-1")},
+		&memory.Entry{Key: "key-2", Value: []byte("value-2")},
+	)
+	bucket2 := memory.NewBucket(
+		&memory.Entry{Key: "key-1", Value: []byte("value-1")},
+		&memory.Entry{Key: "key-2", Value: []byte("value-2")},
+	)
+	bucket3 := memory.NewBucket(
+		&memory.Entry{Key: "key-1", Value: []byte("value-1")},
+		&memory.Entry{Key: "key-2", Value: []byte("value-2")},
+	)
+
+	storage.Register("TestDeleteObjectsConcurrency1", storage.SingleBucketRegistry(bucket1))
+	storage.Register("TestDeleteObjectsConcurrency2", storage.SingleBucketRegistry(bucket2))
+	storage.Register("TestDeleteObjectsConcurrency3", storage.SingleBucketRegistry(bucket3))
+
+	ctx := t.Context()
+
+	results := storage.DeleteObjects(ctx, sequtil.Values([]string{
+		"TestDeleteObjectsConcurrency1://:memory:/key-1",
+		"TestDeleteObjectsConcurrency2://:memory:/key-1",
+		"TestDeleteObjectsConcurrency3://:memory:/key-1",
+		"TestDeleteObjectsConcurrency1://:memory:/key-2",
+		"TestDeleteObjectsConcurrency2://:memory:/key-2",
+		"TestDeleteObjectsConcurrency3://:memory:/key-2",
+	}))
+
+	count := 0
+	receivedKeys := make(map[string]bool)
+	for key, err := range results {
+		if err != nil {
+			t.Fatalf("unexpected error for key %s: %v", key, err)
+		}
+		if key != "" {
+			receivedKeys[key] = true
+		}
+		count++
+	}
+
+	if count < 6 {
+		t.Errorf("expected at least 6 results, got %d", count)
+	}
+
+	// Verify all keys were received (note: URI format returned omits leading slash on object key)
+	expectedKeys := []string{
+		"TestDeleteObjectsConcurrency1://:memory:key-1",
+		"TestDeleteObjectsConcurrency2://:memory:key-1",
+		"TestDeleteObjectsConcurrency3://:memory:key-1",
+		"TestDeleteObjectsConcurrency1://:memory:key-2",
+		"TestDeleteObjectsConcurrency2://:memory:key-2",
+		"TestDeleteObjectsConcurrency3://:memory:key-2",
+	}
+	for _, key := range expectedKeys {
+		if !receivedKeys[key] {
+			t.Errorf("expected key %s not received (received %d keys: %v)", key, len(receivedKeys), receivedKeys)
 		}
 	}
 }

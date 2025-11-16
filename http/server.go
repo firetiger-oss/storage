@@ -380,22 +380,21 @@ func handlePOST(w http.ResponseWriter, r *http.Request, b storage.Bucket, h *Han
 		return
 	}
 
-	err = b.DeleteObjects(r.Context(), keys)
 	w.Header().Set("Content-Type", "application/xml")
 
 	var errors []DeleteError
 	var successKeys []string
 
-	if err != nil {
-		for _, key := range keys {
+	for key, err := range b.DeleteObjects(r.Context(), sequtil.Values(keys)) {
+		if err != nil {
 			errors = append(errors, DeleteError{
 				Key:     key,
 				Code:    "InternalError",
 				Message: err.Error(),
 			})
+		} else {
+			successKeys = append(successKeys, key)
 		}
-	} else {
-		successKeys = keys
 	}
 
 	if err := writeDeleteObjectsResult(w, successKeys, errors, quiet); err != nil {

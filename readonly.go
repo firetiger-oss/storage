@@ -43,8 +43,17 @@ func (b *readOnlyBucket) DeleteObject(ctx context.Context, key string) error {
 	return ErrBucketReadOnly
 }
 
-func (b *readOnlyBucket) DeleteObjects(ctx context.Context, keys []string) error {
-	return ErrBucketReadOnly
+func (b *readOnlyBucket) DeleteObjects(ctx context.Context, objects iter.Seq2[string, error]) iter.Seq2[string, error] {
+	return func(yield func(string, error) bool) {
+		for key, err := range objects {
+			if err == nil {
+				err = ErrBucketReadOnly
+			}
+			if !yield(key, err) {
+				return
+			}
+		}
+	}
 }
 
 func (b *readOnlyBucket) ListObjects(ctx context.Context, options ...ListOption) iter.Seq2[Object, error] {

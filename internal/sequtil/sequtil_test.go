@@ -19,7 +19,7 @@ func TestAll(t *testing.T) {
 			}
 		}
 
-		result, err := sequtil.All(seq)
+		result, err := sequtil.Collect(seq)
 		if err != nil {
 			t.Errorf("unexpected error: %v", err)
 		}
@@ -40,7 +40,7 @@ func TestAll(t *testing.T) {
 			// Empty - no yields
 		}
 
-		result, err := sequtil.All(seq)
+		result, err := sequtil.Collect(seq)
 		if err != nil {
 			t.Errorf("unexpected error: %v", err)
 		}
@@ -65,7 +65,7 @@ func TestAll(t *testing.T) {
 			yield("fourth", nil) // Should not be processed
 		}
 
-		result, err := sequtil.All(seq)
+		result, err := sequtil.Collect(seq)
 		if err == nil {
 			t.Error("expected error, got nil")
 		} else if err.Error() != expectedErr.Error() {
@@ -89,7 +89,7 @@ func TestAll(t *testing.T) {
 			yield(0, expectedErr) // Error on first yield
 		}
 
-		result, err := sequtil.All(seq)
+		result, err := sequtil.Collect(seq)
 		if err == nil {
 			t.Error("expected error, got nil")
 		} else if err.Error() != expectedErr.Error() {
@@ -111,7 +111,7 @@ func TestAll(t *testing.T) {
 			}
 		}
 
-		result, err := sequtil.All(seq)
+		result, err := sequtil.Collect(seq)
 		if err != nil {
 			t.Errorf("unexpected error: %v", err)
 		}
@@ -138,7 +138,7 @@ func TestLimit(t *testing.T) {
 		}
 
 		limited := sequtil.Limit(seq, 5)
-		result, err := sequtil.All(limited)
+		result, err := sequtil.Collect(limited)
 		if err != nil {
 			t.Errorf("unexpected error: %v", err)
 		}
@@ -164,7 +164,7 @@ func TestLimit(t *testing.T) {
 		}
 
 		limited := sequtil.Limit(seq, 0)
-		result, err := sequtil.All(limited)
+		result, err := sequtil.Collect(limited)
 		if err != nil {
 			t.Errorf("unexpected error: %v", err)
 		}
@@ -190,7 +190,7 @@ func TestLimit(t *testing.T) {
 		}
 
 		limited := sequtil.Limit(seq, -5)
-		result, err := sequtil.All(limited)
+		result, err := sequtil.Collect(limited)
 		if err != nil {
 			t.Errorf("unexpected error: %v", err)
 		}
@@ -217,7 +217,7 @@ func TestLimit(t *testing.T) {
 		}
 
 		limited := sequtil.Limit(seq, 10)
-		result, err := sequtil.All(limited)
+		result, err := sequtil.Collect(limited)
 		if err != nil {
 			t.Errorf("unexpected error: %v", err)
 		}
@@ -245,7 +245,7 @@ func TestLimit(t *testing.T) {
 		}
 
 		limited := sequtil.Limit(seq, 5)
-		result, err := sequtil.All(limited)
+		result, err := sequtil.Collect(limited)
 		if err == nil {
 			t.Error("expected error, got nil")
 		} else if err.Error() != expectedErr.Error() {
@@ -274,7 +274,7 @@ func TestLimit(t *testing.T) {
 		}
 
 		limited := sequtil.Limit(seq, 3)
-		result, err := sequtil.All(limited)
+		result, err := sequtil.Collect(limited)
 		if err != nil {
 			t.Errorf("unexpected error: %v", err)
 		}
@@ -306,7 +306,7 @@ func TestTransform(t *testing.T) {
 		}
 
 		transformed := sequtil.Transform(seq, transform)
-		result, err := sequtil.All(transformed)
+		result, err := sequtil.Collect(transformed)
 		if err != nil {
 			t.Errorf("unexpected error: %v", err)
 		}
@@ -341,7 +341,7 @@ func TestTransform(t *testing.T) {
 		}
 
 		transformed := sequtil.Transform(seq, transform)
-		result, err := sequtil.All(transformed)
+		result, err := sequtil.Collect(transformed)
 		if err == nil {
 			t.Error("expected error, got nil")
 		} else if err.Error() != expectedErr.Error() {
@@ -376,7 +376,7 @@ func TestTransform(t *testing.T) {
 		}
 
 		transformed := sequtil.Transform(seq, transform)
-		result, err := sequtil.All(transformed)
+		result, err := sequtil.Collect(transformed)
 		if err == nil {
 			t.Error("expected error, got nil")
 		} else if err.Error() != expectedErr.Error() {
@@ -404,7 +404,7 @@ func TestTransform(t *testing.T) {
 		}
 
 		transformed := sequtil.Transform(seq, transform)
-		result, err := sequtil.All(transformed)
+		result, err := sequtil.Collect(transformed)
 		if err != nil {
 			t.Errorf("unexpected error: %v", err)
 		}
@@ -429,7 +429,7 @@ func TestTransform(t *testing.T) {
 		}
 
 		transformed := sequtil.Transform(seq, transform)
-		result, err := sequtil.All(transformed)
+		result, err := sequtil.Collect(transformed)
 		if err != nil {
 			t.Errorf("unexpected error: %v", err)
 		}
@@ -463,7 +463,7 @@ func TestChainedOperations(t *testing.T) {
 		// First limit to 5, then transform
 		limited := sequtil.Limit(seq, 5)
 		transformed := sequtil.Transform(limited, transform)
-		result, err := sequtil.All(transformed)
+		result, err := sequtil.Collect(transformed)
 		if err != nil {
 			t.Errorf("unexpected error: %v", err)
 		}
@@ -495,7 +495,7 @@ func TestChainedOperations(t *testing.T) {
 		// First transform, then limit to 3
 		transformed := sequtil.Transform(seq, transform)
 		limited := sequtil.Limit(transformed, 3)
-		result, err := sequtil.All(limited)
+		result, err := sequtil.Collect(limited)
 		if err != nil {
 			t.Errorf("unexpected error: %v", err)
 		}
@@ -527,7 +527,7 @@ func TestChainedOperations(t *testing.T) {
 		// Chain multiple transforms: double, then add 10
 		doubled := sequtil.Transform(seq, double)
 		final := sequtil.Transform(doubled, addTen)
-		result, err := sequtil.All(final)
+		result, err := sequtil.Collect(final)
 		if err != nil {
 			t.Errorf("unexpected error: %v", err)
 		}

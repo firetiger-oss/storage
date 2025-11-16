@@ -229,20 +229,15 @@ func (b *Bucket) DeleteObject(ctx context.Context, key string) error {
 	return nil
 }
 
-func (b *Bucket) DeleteObjects(ctx context.Context, keys []string) error {
-	if err := context.Cause(ctx); err != nil {
-		return err
+func (b *Bucket) DeleteObjects(ctx context.Context, objects iter.Seq2[string, error]) iter.Seq2[string, error] {
+	return func(yield func(string, error) bool) {
+		concurrent.Pipeline(ctx, sequtil.Transform(objects, func(key string) (string, error) {
+			err := storage.ValidObjectKey(key)
+			return key, err
+		}), func(ctx context.Context, key string) (string, error) {
+			return key, b.DeleteObject(ctx, key)
+		})(yield)
 	}
-
-	for _, key := range keys {
-		if err := storage.ValidObjectKey(key); err != nil {
-			return err
-		}
-	}
-
-	return concurrent.RunTasks(ctx, keys, func(ctx context.Context, key string) error {
-		return b.DeleteObject(ctx, key)
-	})
 }
 
 type listedObject struct {

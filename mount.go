@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"iter"
-	"slices"
 	"strings"
 	"time"
 )
@@ -79,17 +78,20 @@ func (b *mountedBucket) DeleteObject(ctx context.Context, key string) error {
 	return errors.Join(err1, err2)
 }
 
-func (b *mountedBucket) DeleteObjects(ctx context.Context, keys []string) error {
-	var err1 = b.bucket.DeleteObjects(ctx, keys)
-	var err2 error
-	keys = slices.Clone(keys)
-	keys = slices.DeleteFunc(keys, func(key string) bool {
-		return !strings.HasPrefix(key, b.mount.prefix)
+func (b *mountedBucket) DeleteObjects(ctx context.Context, objects iter.Seq2[string, error]) iter.Seq2[string, error] {
+	return b.mount.DeleteObjects(ctx, func(yield func(string, error) bool) {
+		for key, err := range b.bucket.DeleteObjects(ctx, objects) {
+			if err != nil {
+				if !yield(key, err) {
+					return
+				}
+			} else if strings.HasPrefix(key, b.mount.prefix) {
+				if !yield(key, nil) {
+					return
+				}
+			}
+		}
 	})
-	if len(keys) > 0 {
-		err2 = b.mount.DeleteObjects(ctx, keys)
-	}
-	return errors.Join(err1, err2)
 }
 
 func (b *mountedBucket) ListObjects(ctx context.Context, options ...ListOption) iter.Seq2[Object, error] {
@@ -299,18 +301,18 @@ func (b *mountedPrefixBucket) DeleteObject(ctx context.Context, key string) erro
 	return b.bucket.DeleteObject(ctx, strings.TrimPrefix(key, b.prefix))
 }
 
-func (b *mountedPrefixBucket) DeleteObjects(ctx context.Context, keys []string) error {
-	keys = slices.Clone(keys)
-	keys = slices.DeleteFunc(keys, func(key string) bool {
-		return !strings.HasPrefix(key, b.prefix)
-	})
-	if len(keys) == 0 {
-		return nil
+func (b *mountedPrefixBucket) DeleteObjects(ctx context.Context, objects iter.Seq2[string, error]) iter.Seq2[string, error] {
+	return func(yield func(string, error) bool) {
+		b.bucket.DeleteObjects(ctx, func(yield func(string, error) bool) {
+			for key, err := range objects {
+				if err != nil || strings.HasPrefix(key, b.prefix) {
+					if !yield(strings.TrimPrefix(key, b.prefix), err) {
+						return
+					}
+				}
+			}
+		})(yield)
 	}
-	for i, key := range keys {
-		keys[i] = strings.TrimPrefix(key, b.prefix)
-	}
-	return b.bucket.DeleteObjects(ctx, keys)
 }
 
 func (b *mountedPrefixBucket) ListObjects(ctx context.Context, options ...ListOption) iter.Seq2[Object, error] {
