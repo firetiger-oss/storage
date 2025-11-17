@@ -1,6 +1,7 @@
 package file
 
 import (
+	"cmp"
 	"context"
 	"crypto/md5"
 	"encoding/hex"
@@ -13,7 +14,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -287,36 +287,33 @@ func (b *Bucket) DeleteObject(ctx context.Context, key string) error {
 	return nil
 }
 
-func (b *Bucket) DeleteObjects(ctx context.Context, keys []string) error {
-	if err := context.Cause(ctx); err != nil {
-		return err
-	}
-	for _, key := range keys {
-		if err := storage.ValidObjectKey(key); err != nil {
-			return err
-		}
-	}
-	if err := b.stat(); err != nil {
-		return err
-	}
-	var errs []error
-	var dirs []string
-	for _, key := range keys {
-		filePath := b.path(key)
-		if err := os.Remove(filePath); err != nil {
-			if !isErrNotExist(err) {
-				errs = append(errs, err)
+func (b *Bucket) DeleteObjects(ctx context.Context, objects iter.Seq2[string, error]) iter.Seq2[string, error] {
+	return func(yield func(string, error) bool) {
+		dirs := make(map[string]struct{})
+		defer func() {
+			for dir := range dirs {
+				b.removeEmptyDirectories(dir)
 			}
-		} else {
-			dirs = append(dirs, filepath.Dir(filePath))
+		}()
+
+		for key, err := range objects {
+			err = cmp.Or(err, context.Cause(ctx), b.stat(), storage.ValidObjectKey(key))
+
+			if err == nil {
+				filePath := b.path(key)
+				if err = os.Remove(filePath); err != nil && isErrNotExist(err) {
+					err = nil
+				}
+				if err == nil {
+					dirs[filepath.Dir(filePath)] = struct{}{}
+				}
+			}
+
+			if !yield(key, err) {
+				return
+			}
 		}
 	}
-	slices.Sort(dirs)
-	dirs = slices.Compact(dirs)
-	for _, dir := range dirs {
-		b.removeEmptyDirectories(dir)
-	}
-	return errors.Join(errs...)
 }
 
 func (b *Bucket) ListObjects(ctx context.Context, options ...storage.ListOption) iter.Seq2[storage.Object, error] {

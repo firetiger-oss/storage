@@ -42,8 +42,10 @@ func (emptyBucket) DeleteObject(ctx context.Context, key string) error {
 	return cmp.Or(context.Cause(ctx), ErrBucketReadOnly)
 }
 
-func (emptyBucket) DeleteObjects(ctx context.Context, keys []string) error {
-	return cmp.Or(context.Cause(ctx), ErrBucketReadOnly)
+func (emptyBucket) DeleteObjects(ctx context.Context, objects iter.Seq2[string, error]) iter.Seq2[string, error] {
+	return func(yield func(string, error) bool) {
+		yield("", cmp.Or(context.Cause(ctx), ErrBucketReadOnly))
+	}
 }
 
 func (emptyBucket) ListObjects(ctx context.Context, options ...ListOption) iter.Seq2[Object, error] {

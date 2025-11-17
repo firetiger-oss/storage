@@ -292,10 +292,16 @@ func (c *cachedBucket) DeleteObject(ctx context.Context, key string) error {
 	return c.bucket.DeleteObject(ctx, key)
 }
 
-func (c *cachedBucket) DeleteObjects(ctx context.Context, keys []string) error {
-	c.objects.Drop(keys...)
-	c.infos.Drop(keys...)
-	return c.bucket.DeleteObjects(ctx, keys)
+func (c *cachedBucket) DeleteObjects(ctx context.Context, objects iter.Seq2[string, error]) iter.Seq2[string, error] {
+	return c.bucket.DeleteObjects(ctx, func(yield func(string, error) bool) {
+		for key, err := range objects {
+			c.objects.Drop(key)
+			c.infos.Drop(key)
+			if !yield(key, err) {
+				return
+			}
+		}
+	})
 }
 
 func (c *cachedBucket) ListObjects(ctx context.Context, options ...ListOption) iter.Seq2[Object, error] {

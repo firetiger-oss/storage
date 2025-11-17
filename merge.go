@@ -11,6 +11,7 @@ import (
 
 	"github.com/achille-roussel/kway-go"
 	"github.com/firetiger-oss/storage/concurrent"
+	"github.com/firetiger-oss/storage/internal/sequtil"
 )
 
 // Merge creates a bucket that merges multiple buckets according to specific rules:
@@ -89,10 +90,21 @@ func (m *mergedBucket) DeleteObject(ctx context.Context, key string) error {
 	})
 }
 
-func (m *mergedBucket) DeleteObjects(ctx context.Context, keys []string) error {
-	return concurrent.RunTasks(ctx, m.buckets, func(ctx context.Context, bucket Bucket) error {
-		return bucket.DeleteObjects(ctx, keys)
-	})
+func (m *mergedBucket) DeleteObjects(ctx context.Context, objects iter.Seq2[string, error]) iter.Seq2[string, error] {
+	return func(yield func(string, error) bool) {
+		keys, err := sequtil.Collect(objects)
+		if err != nil {
+			yield("", err)
+			return
+		}
+
+		sequences := make([]iter.Seq2[string, error], len(m.buckets))
+		for i, bucket := range m.buckets {
+			sequences[i] = bucket.DeleteObjects(ctx, sequtil.Values(keys))
+		}
+
+		sequtil.Merge(sequences...)(yield)
+	}
 }
 
 func (m *mergedBucket) ListObjects(ctx context.Context, options ...ListOption) iter.Seq2[Object, error] {

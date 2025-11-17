@@ -1,6 +1,7 @@
 package file
 
 import (
+	"cmp"
 	"context"
 	"crypto/md5"
 	"crypto/sha256"
@@ -440,21 +441,22 @@ func (b *cachedBucket) DeleteObject(ctx context.Context, key string) error {
 	return b.bucket.DeleteObject(ctx, key)
 }
 
-func (b *cachedBucket) DeleteObjects(ctx context.Context, keys []string) error {
-	if err := context.Cause(ctx); err != nil {
-		return err
-	}
-	for _, key := range keys {
-		if err := storage.ValidObjectKey(key); err != nil {
-			return err
+func (b *cachedBucket) DeleteObjects(ctx context.Context, objects iter.Seq2[string, error]) iter.Seq2[string, error] {
+	return b.bucket.DeleteObjects(ctx, func(yield func(string, error) bool) {
+		for key, err := range objects {
+			err = cmp.Or(err, context.Cause(ctx), storage.ValidObjectKey(key))
+
+			if err == nil {
+				filePath := b.makeFilePath(key)
+				b.delete(filePath)
+				os.Remove(filePath)
+			}
+
+			if !yield(key, err) {
+				return
+			}
 		}
-	}
-	for _, key := range keys {
-		filePath := b.makeFilePath(key)
-		b.delete(filePath)
-		os.Remove(filePath)
-	}
-	return b.bucket.DeleteObjects(ctx, keys)
+	})
 }
 
 func (b *cachedBucket) ListObjects(ctx context.Context, options ...storage.ListOption) iter.Seq2[storage.Object, error] {

@@ -21,7 +21,6 @@ import (
 	"github.com/firetiger-oss/storage"
 	"github.com/firetiger-oss/storage/backoff"
 	"github.com/firetiger-oss/storage/cache"
-	"github.com/firetiger-oss/storage/concurrent"
 	"github.com/firetiger-oss/storage/internal/sequtil"
 	"github.com/firetiger-oss/storage/uri"
 )
@@ -340,33 +339,70 @@ func (b *Bucket) DeleteObject(ctx context.Context, key string) error {
 	return nil
 }
 
-func (b *Bucket) DeleteObjects(ctx context.Context, keys []string) error {
-	if err := context.Cause(ctx); err != nil {
-		return err
-	}
+func (b *Bucket) DeleteObjects(ctx context.Context, objects iter.Seq2[string, error]) iter.Seq2[string, error] {
+	return func(yield func(string, error) bool) {
+		for chunk, err := range sequtil.Chunk(objects, 1000) {
+			if err != nil {
+				if !yield("", err) {
+					return
+				}
+				continue
+			}
 
-	for _, key := range keys {
-		if err := storage.ValidObjectKey(key); err != nil {
-			return err
+			for i, key := range chunk {
+				if err := storage.ValidObjectKey(key); err != nil {
+					if !yield(key, err) {
+						return
+					}
+					chunk[i] = ""
+				}
+			}
+
+			chunk = slices.DeleteFunc(chunk, func(key string) bool { return key == "" })
+			if len(chunk) == 0 {
+				continue
+			}
+
+			slices.Sort(chunk)
+			identifiers := make([]types.ObjectIdentifier, len(chunk))
+			for i := range chunk {
+				identifiers[i] = types.ObjectIdentifier{Key: &chunk[i]}
+			}
+
+			resp, err := b.client.DeleteObjects(ctx, &s3.DeleteObjectsInput{
+				Bucket: &b.bucket,
+				Delete: &types.Delete{Objects: identifiers},
+			})
+
+			if err != nil {
+				chunkError := makeIcebergError(err)
+				for _, key := range chunk {
+					if !yield(key, chunkError) {
+						return
+					}
+				}
+				continue
+			}
+
+			slices.SortFunc(resp.Errors, func(a, b types.Error) int {
+				return strings.Compare(aws.ToString(a.Key), aws.ToString(b.Key))
+			})
+
+			for _, key := range chunk {
+				i, found := slices.BinarySearchFunc(resp.Errors, key,
+					func(a types.Error, b string) int { return strings.Compare(aws.ToString(a.Key), b) })
+				var keyError error
+				if found {
+					keyError = fmt.Errorf("%s: %s",
+						aws.ToString(resp.Errors[i].Code),
+						aws.ToString(resp.Errors[i].Message))
+				}
+				if !yield(key, keyError) {
+					return
+				}
+			}
 		}
 	}
-
-	return concurrent.RunTasks(ctx, slices.Collect(slices.Chunk(keys, 1000)),
-		func(ctx context.Context, chunk []string) error {
-			objects := make([]types.ObjectIdentifier, len(chunk))
-			for i := range chunk {
-				objects[i] = types.ObjectIdentifier{Key: &chunk[i]}
-			}
-			_, err := b.client.DeleteObjects(ctx, &s3.DeleteObjectsInput{
-				Bucket: aws.String(b.bucket),
-				Delete: &types.Delete{Objects: objects},
-			})
-			if err != nil {
-				return makeIcebergError(err)
-			}
-			return nil
-		},
-	)
 }
 
 type listedObject struct {

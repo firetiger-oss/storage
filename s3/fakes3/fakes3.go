@@ -13,6 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
 	"github.com/firetiger-oss/storage"
+	"github.com/firetiger-oss/storage/internal/sequtil"
 	"github.com/firetiger-oss/storage/memory"
 	"github.com/google/uuid"
 )
@@ -163,14 +164,32 @@ func (c *Client) DeleteObjects(ctx context.Context, params *s3.DeleteObjectsInpu
 	if err := context.Cause(ctx); err != nil {
 		return nil, err
 	}
+
 	keys := make([]string, len(params.Delete.Objects))
 	for i, obj := range params.Delete.Objects {
 		keys[i] = aws.ToString(obj.Key)
 	}
-	if err := c.Bucket.DeleteObjects(ctx, keys); err != nil {
-		return nil, err
+
+	output := &s3.DeleteObjectsOutput{
+		Deleted: make([]types.DeletedObject, 0),
+		Errors:  make([]types.Error, 0),
 	}
-	return &s3.DeleteObjectsOutput{}, nil
+
+	for key, err := range c.Bucket.DeleteObjects(ctx, sequtil.Values(keys)) {
+		if err != nil {
+			output.Errors = append(output.Errors, types.Error{
+				Key:     aws.String(key),
+				Code:    aws.String("InternalError"),
+				Message: aws.String(err.Error()),
+			})
+		} else {
+			output.Deleted = append(output.Deleted, types.DeletedObject{
+				Key: aws.String(key),
+			})
+		}
+	}
+
+	return output, nil
 }
 
 func (c *Client) ListObjectsV2(ctx context.Context, params *s3.ListObjectsV2Input, optFns ...func(*s3.Options)) (*s3.ListObjectsV2Output, error) {

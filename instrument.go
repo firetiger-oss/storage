@@ -27,8 +27,7 @@ func (i *instrumentedBucket) Create(ctx context.Context) error { return i.base.C
 func (i *instrumentedBucket) HeadObject(ctx context.Context, key string) (ObjectInfo, error) {
 	ctx, span := oteltrace.Start(ctx, "storage.Bucket.HeadObject",
 		attribute.String("storage.bucket.location", i.base.Location()),
-		attribute.String("storage.bucket.head.object", key),
-	)
+		attribute.String("storage.bucket.head.object", key))
 	defer span.End()
 	object, err := i.base.HeadObject(ctx, key)
 	oteltrace.RecordError(span, err)
@@ -49,8 +48,7 @@ func (i *instrumentedBucket) GetObject(ctx context.Context, key string, options 
 	ctx, span := oteltrace.Start(ctx, "storage.Bucket.GetObject",
 		attribute.String("storage.bucket.location", i.base.Location()),
 		attribute.String("storage.bucket.get.object", key),
-		attribute.Int64("storage.bucket.get.offset", start),
-	)
+		attribute.Int64("storage.bucket.get.offset", start))
 	r, object, err := i.base.GetObject(ctx, key, options...)
 	oteltrace.RecordError(span, err)
 	if r != nil {
@@ -97,23 +95,34 @@ func (i *instrumentedBucket) PutObject(ctx context.Context, key string, value io
 func (i *instrumentedBucket) DeleteObject(ctx context.Context, key string) error {
 	ctx, span := oteltrace.Start(ctx, "storage.Bucket.DeleteObject",
 		attribute.String("storage.bucket.location", i.base.Location()),
-		attribute.String("storage.bucket.delete.object", key),
-	)
+		attribute.String("storage.bucket.delete.object", key))
 	defer span.End()
 	err := i.base.DeleteObject(ctx, key)
 	oteltrace.RecordError(span, err)
 	return err
 }
 
-func (i *instrumentedBucket) DeleteObjects(ctx context.Context, keys []string) error {
-	ctx, span := oteltrace.Start(ctx, "storage.Bucket.DeleteObjects",
-		attribute.String("storage.bucket.location", i.base.Location()),
-		attribute.Int("storage.bucket.delete.objects", len(keys)),
-	)
-	defer span.End()
-	err := i.base.DeleteObjects(ctx, keys)
-	oteltrace.RecordError(span, err)
-	return err
+func (i *instrumentedBucket) DeleteObjects(ctx context.Context, objects iter.Seq2[string, error]) iter.Seq2[string, error] {
+	return func(yield func(string, error) bool) {
+		ctx, span := oteltrace.Start(ctx, "storage.Bucket.DeleteObjects",
+			attribute.String("storage.bucket.location", i.base.Location()))
+		defer span.End()
+
+		var count int
+		var hasError bool
+		for key, err := range i.base.DeleteObjects(ctx, objects) {
+			if !yield(key, err) {
+				break
+			}
+			if !hasError && err != nil {
+				hasError = true
+				oteltrace.RecordError(span, err)
+			}
+			count++
+		}
+
+		span.SetAttributes(attribute.Int("storage.bucket.delete.objects", count))
+	}
 }
 
 func (i *instrumentedBucket) ListObjects(ctx context.Context, options ...ListOption) iter.Seq2[Object, error] {
@@ -121,8 +130,7 @@ func (i *instrumentedBucket) ListObjects(ctx context.Context, options ...ListOpt
 		listOptions := NewListOptions(options...)
 		ctx, span := oteltrace.Start(ctx, "storage.Bucket.ListObjects",
 			attribute.String("storage.bucket.location", i.base.Location()),
-			attribute.String("storage.bucket.list.prefix", listOptions.KeyPrefix()),
-		)
+			attribute.String("storage.bucket.list.prefix", listOptions.KeyPrefix()))
 		defer span.End()
 
 		oteltrace.RecordSeq(span, "storage.bucket.list.objects",
@@ -136,8 +144,7 @@ func (i *instrumentedBucket) WatchObjects(ctx context.Context, options ...ListOp
 		listOptions := NewListOptions(options...)
 		ctx, span := oteltrace.Start(ctx, "storage.Bucket.WatchObjects",
 			attribute.String("storage.bucket.location", i.base.Location()),
-			attribute.String("storage.bucket.watch.prefix", listOptions.KeyPrefix()),
-		)
+			attribute.String("storage.bucket.watch.prefix", listOptions.KeyPrefix()))
 		defer span.End()
 
 		oteltrace.RecordSeq(span, "storage.bucket.watch.objects",
@@ -149,8 +156,7 @@ func (i *instrumentedBucket) WatchObjects(ctx context.Context, options ...ListOp
 func (i *instrumentedBucket) PresignGetObject(ctx context.Context, key string, expiration time.Duration, options ...GetOption) (string, error) {
 	ctx, span := oteltrace.Start(ctx, "storage.Bucket.PresignGetObject",
 		attribute.String("storage.bucket.location", i.base.Location()),
-		attribute.String("storage.bucket.presign.key", key),
-	)
+		attribute.String("storage.bucket.presign.key", key))
 	defer span.End()
 	url, err := i.base.PresignGetObject(ctx, key, expiration, options...)
 	oteltrace.RecordError(span, err)
@@ -160,8 +166,7 @@ func (i *instrumentedBucket) PresignGetObject(ctx context.Context, key string, e
 func (i *instrumentedBucket) PresignPutObject(ctx context.Context, key string, expiration time.Duration, options ...PutOption) (string, error) {
 	ctx, span := oteltrace.Start(ctx, "storage.Bucket.PresignPutObject",
 		attribute.String("storage.bucket.location", i.base.Location()),
-		attribute.String("storage.bucket.presign.key", key),
-	)
+		attribute.String("storage.bucket.presign.key", key))
 	defer span.End()
 	url, err := i.base.PresignPutObject(ctx, key, expiration, options...)
 	oteltrace.RecordError(span, err)
@@ -171,8 +176,7 @@ func (i *instrumentedBucket) PresignPutObject(ctx context.Context, key string, e
 func (i *instrumentedBucket) PresignHeadObject(ctx context.Context, key string) (string, error) {
 	ctx, span := oteltrace.Start(ctx, "storage.Bucket.PresignHeadObject",
 		attribute.String("storage.bucket.location", i.base.Location()),
-		attribute.String("storage.bucket.presign.key", key),
-	)
+		attribute.String("storage.bucket.presign.key", key))
 	defer span.End()
 	url, err := i.base.PresignHeadObject(ctx, key)
 	oteltrace.RecordError(span, err)
@@ -182,8 +186,7 @@ func (i *instrumentedBucket) PresignHeadObject(ctx context.Context, key string) 
 func (i *instrumentedBucket) PresignDeleteObject(ctx context.Context, key string) (string, error) {
 	ctx, span := oteltrace.Start(ctx, "storage.Bucket.PresignDeleteObject",
 		attribute.String("storage.bucket.location", i.base.Location()),
-		attribute.String("storage.bucket.presign.key", key),
-	)
+		attribute.String("storage.bucket.presign.key", key))
 	defer span.End()
 	url, err := i.base.PresignDeleteObject(ctx, key)
 	oteltrace.RecordError(span, err)

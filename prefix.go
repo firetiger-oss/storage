@@ -4,7 +4,6 @@ import (
 	"context"
 	"io"
 	"iter"
-	"slices"
 	"strings"
 	"time"
 
@@ -56,12 +55,20 @@ func (b *prefixedBucket) DeleteObject(ctx context.Context, key string) error {
 	return b.bucket.DeleteObject(ctx, b.prefix+key)
 }
 
-func (b *prefixedBucket) DeleteObjects(ctx context.Context, keys []string) error {
-	keys = slices.Clone(keys)
-	for i, key := range keys {
-		keys[i] = b.prefix + key
+func (b *prefixedBucket) DeleteObjects(ctx context.Context, objects iter.Seq2[string, error]) iter.Seq2[string, error] {
+	return func(yield func(string, error) bool) {
+		for key, err := range b.bucket.DeleteObjects(ctx, func(yield func(string, error) bool) {
+			for key, err := range objects {
+				if !yield(b.prefix+key, err) {
+					return
+				}
+			}
+		}) {
+			if !yield(strings.TrimPrefix(key, b.prefix), err) {
+				return
+			}
+		}
 	}
-	return b.bucket.DeleteObjects(ctx, keys)
 }
 
 func (b *prefixedBucket) ListObjects(ctx context.Context, options ...ListOption) iter.Seq2[Object, error] {

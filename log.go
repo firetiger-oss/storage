@@ -184,20 +184,24 @@ func (b *loggedBucket) DeleteObject(ctx context.Context, key string) error {
 	return err
 }
 
-func (b *loggedBucket) DeleteObjects(ctx context.Context, keys []string) error {
-	start := time.Now()
-	err := b.bucket.DeleteObjects(ctx, keys)
-
-	const op = "DeleteObjects"
-	attrCount := makeAttrCount(len(keys))
-	attrDuration := makeAttrDuration(start)
-	if err != nil {
-		b.logger.ErrorContext(ctx, op, attrCount, attrDuration, makeAttrError(err))
-	} else {
-		b.logger.DebugContext(ctx, op, attrCount, attrDuration)
+func (b *loggedBucket) DeleteObjects(ctx context.Context, objects iter.Seq2[string, error]) iter.Seq2[string, error] {
+	return func(yield func(string, error) bool) {
+		const op = "DeleteObjects"
+		var hasError bool
+		for key, err := range b.bucket.DeleteObjects(ctx, objects) {
+			attrKey := makeAttrKey(b, key)
+			if err != nil {
+				hasError = true
+				b.logger.ErrorContext(ctx, op, attrKey, makeAttrError(err))
+			}
+			if !yield(key, err) {
+				return
+			}
+		}
+		if !hasError {
+			b.logger.DebugContext(ctx, op)
+		}
 	}
-
-	return err
 }
 
 func (b *loggedBucket) ListObjects(ctx context.Context, options ...ListOption) iter.Seq2[Object, error] {

@@ -11,12 +11,14 @@ import (
 	"maps"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/firetiger-oss/storage"
+	"github.com/firetiger-oss/storage/internal/sequtil"
 	"github.com/firetiger-oss/storage/uri"
 )
 
@@ -307,58 +309,120 @@ func (b *Bucket) DeleteObject(ctx context.Context, key string) error {
 	return nil
 }
 
-func (b *Bucket) DeleteObjects(ctx context.Context, keys []string) error {
-	for _, key := range keys {
-		if err := storage.ValidObjectKey(key); err != nil {
-			return err
+func (b *Bucket) DeleteObjects(ctx context.Context, objects iter.Seq2[string, error]) iter.Seq2[string, error] {
+	return func(yield func(string, error) bool) {
+		for chunk, err := range sequtil.Chunk(objects, 1000) {
+			if err != nil {
+				if !yield("", err) {
+					return
+				}
+				continue
+			}
+
+			for i, key := range chunk {
+				if err := storage.ValidObjectKey(key); err != nil {
+					if !yield(key, err) {
+						return
+					}
+					chunk[i] = ""
+				}
+			}
+
+			chunk = slices.DeleteFunc(chunk, func(key string) bool { return key == "" })
+			if len(chunk) == 0 {
+				continue
+			}
+
+			slices.Sort(chunk)
+			request := DeleteObjectsRequest{
+				Quiet:   false,
+				Objects: make([]DeleteObject, len(chunk)),
+			}
+
+			for i, key := range chunk {
+				request.Objects[i].Key = key
+			}
+
+			buffer := new(bytes.Buffer)
+			if err := xml.NewEncoder(buffer).Encode(request); err != nil {
+				for _, key := range chunk {
+					if !yield(key, err) {
+						return
+					}
+				}
+				continue
+			}
+
+			req, err := b.newRequest(ctx, http.MethodPost, "?delete=", buffer)
+			if err != nil {
+				httpErr := makeIcebergError(req, nil, err)
+				for _, key := range chunk {
+					if !yield(key, httpErr) {
+						return
+					}
+				}
+				continue
+			}
+			req.Header.Set("Content-Type", "application/xml")
+
+			res, err := b.client.Do(req)
+			if err != nil {
+				req.Body.Close()
+				httpErr := makeIcebergError(req, nil, err)
+				for _, key := range chunk {
+					if !yield(key, httpErr) {
+						return
+					}
+				}
+				continue
+			}
+
+			if res.StatusCode != http.StatusOK {
+				req.Body.Close()
+				res.Body.Close()
+				httpErr := makeIcebergError(req, res, nil)
+				for _, key := range chunk {
+					if !yield(key, httpErr) {
+						return
+					}
+				}
+				continue
+			}
+
+			var result DeleteObjectsResult
+			if err := xml.NewDecoder(res.Body).Decode(&result); err != nil {
+				req.Body.Close()
+				res.Body.Close()
+				parseErr := fmt.Errorf("parsing delete response: %w", err)
+				for _, key := range chunk {
+					if !yield(key, parseErr) {
+						return
+					}
+				}
+				continue
+			}
+			req.Body.Close()
+			res.Body.Close()
+
+			slices.SortFunc(result.Errors, func(a, b DeleteError) int {
+				return strings.Compare(a.Key, b.Key)
+			})
+
+			for _, key := range chunk {
+				i, found := slices.BinarySearchFunc(result.Errors, key,
+					func(a DeleteError, b string) int { return strings.Compare(a.Key, b) })
+				var keyError error
+				if found {
+					keyError = fmt.Errorf("%s: %s",
+						result.Errors[i].Code,
+						result.Errors[i].Message)
+				}
+				if !yield(key, keyError) {
+					return
+				}
+			}
 		}
 	}
-
-	request := DeleteObjectsRequest{
-		Quiet:   true,
-		Objects: make([]DeleteObject, len(keys)),
-	}
-
-	for i, key := range keys {
-		request.Objects[i].Key = key
-	}
-
-	buffer := new(bytes.Buffer)
-	if err := xml.NewEncoder(buffer).Encode(request); err != nil {
-		return err
-	}
-
-	req, err := b.newRequest(ctx, http.MethodPost, "?delete=", buffer)
-	if err != nil {
-		return makeIcebergError(req, nil, err)
-	}
-	defer req.Body.Close()
-	req.Header.Set("Content-Type", "application/xml")
-
-	res, err := b.client.Do(req)
-	if err != nil {
-		return makeIcebergError(req, nil, err)
-	}
-	defer res.Body.Close()
-
-	if res.StatusCode != http.StatusOK {
-		return makeIcebergError(req, res, nil)
-	}
-
-	var result DeleteObjectsResult
-	if err := xml.NewDecoder(res.Body).Decode(&result); err != nil {
-		return fmt.Errorf("parsing delete response: %w", err)
-	}
-
-	if len(result.Errors) > 0 {
-		var errs []error
-		for _, e := range result.Errors {
-			errs = append(errs, fmt.Errorf("failed to delete %s: %s - %s", e.Key, e.Code, e.Message))
-		}
-		return errors.Join(errs...)
-	}
-
-	return nil
 }
 
 func (b *Bucket) ListObjects(ctx context.Context, options ...storage.ListOption) iter.Seq2[storage.Object, error] {

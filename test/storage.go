@@ -15,6 +15,7 @@ import (
 
 	"github.com/firetiger-oss/storage"
 	"github.com/firetiger-oss/storage/gs"
+	"github.com/firetiger-oss/storage/internal/sequtil"
 	"github.com/firetiger-oss/storage/uri"
 )
 
@@ -430,10 +431,14 @@ func testStorageDeleteObjectIsGone(t *testing.T, bucket storage.Bucket) {
 }
 
 func testStorageDeleteObjectsIsIdempotent(t *testing.T, bucket storage.Bucket) {
-	if err := bucket.DeleteObjects(t.Context(), []string{
+	results := bucket.DeleteObjects(t.Context(), sequtil.Values([]string{
 		"A", "B", "C",
-	}); err != nil {
-		t.Fatal("unexpected error deleting objects:", err)
+	}))
+	// Consume results and check for errors
+	for key, err := range results {
+		if err != nil {
+			t.Fatalf("unexpected error deleting object %s: %v", key, err)
+		}
 	}
 }
 
@@ -462,8 +467,12 @@ func testStorageDeleteObjectsIsGone(t *testing.T, bucket storage.Bucket) {
 		t.Fatalf("unexpected object size: %d != %d", object.Size, len(value))
 	}
 
-	if err := bucket.DeleteObjects(ctx, []string{keyA, keyC}); err != nil {
-		t.Fatal("unexpected error deleting objects:", err)
+	// Delete objects using iterator API
+	results := bucket.DeleteObjects(ctx, sequtil.Values([]string{keyA, keyC}))
+	for key, err := range results {
+		if err != nil {
+			t.Fatalf("unexpected error deleting object %s: %v", key, err)
+		}
 	}
 
 	_, _, err := bucket.GetObject(ctx, keyA)
@@ -743,12 +752,21 @@ func testStorageDeleteObjectsInvalidPath(t *testing.T, bucket storage.Bucket) {
 	ctx := t.Context()
 
 	for _, path := range InvalidPaths {
-		if err := bucket.DeleteObjects(ctx, []string{
+		results := bucket.DeleteObjects(ctx, sequtil.Values([]string{
 			"first/path/is/valid",
 			path,
 			"third/path/is/valid",
-		}); !errors.Is(err, storage.ErrInvalidObjectKey) {
-			t.Errorf("expected invalid path error: %s: %v", path, err)
+		}))
+		// Consume results and look for invalid key error
+		foundInvalidError := false
+		for _, err := range results {
+			if errors.Is(err, storage.ErrInvalidObjectKey) {
+				foundInvalidError = true
+				break
+			}
+		}
+		if !foundInvalidError {
+			t.Errorf("expected invalid path error for: %s", path)
 		}
 	}
 }
@@ -972,8 +990,13 @@ func testStorageContextCanceled(t *testing.T, bucket storage.Bucket) {
 	if err := bucket.DeleteObject(ctx, "test-key"); !errors.Is(err, context.Canceled) {
 		t.Errorf("expected context canceled error, got %v", err)
 	}
-	if err := bucket.DeleteObjects(ctx, []string{"test-key"}); !errors.Is(err, context.Canceled) {
-		t.Errorf("expected context canceled error, got %v", err)
+	// Test DeleteObjects with cancelled context
+	results := bucket.DeleteObjects(ctx, sequtil.Values([]string{"test-key"}))
+	for _, err := range results {
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("expected context canceled error, got %v", err)
+		}
+		break // Only check first result
 	}
 	next, stop := iter.Pull2(bucket.ListObjects(ctx))
 	defer stop()
