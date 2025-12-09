@@ -311,36 +311,36 @@ func TestHTTPServerEscapedPaths(t *testing.T) {
 	}{
 		{
 			name:        "escaped slash preserved",
-			objectKey:   "foo%2Fbar",       // Key contains literal %2F
-			urlPath:     "/foo%2Fbar",      // URL with %2F
+			objectKey:   "foo%2Fbar",  // Key contains literal %2F
+			urlPath:     "/foo%2Fbar", // URL with %2F
 			content:     "slash content",
 			description: "Escaped slash %2F should be preserved in the key, not decoded to /",
 		},
 		{
 			name:        "escaped space preserved",
-			objectKey:   "my%20file",       // Key contains literal %20
-			urlPath:     "/my%20file",      // URL with %20
+			objectKey:   "my%20file",  // Key contains literal %20
+			urlPath:     "/my%20file", // URL with %20
 			content:     "space content",
 			description: "Escaped space %20 should be preserved in the key, not decoded to space",
 		},
 		{
 			name:        "escaped percent preserved",
-			objectKey:   "foo%25bar",       // Key contains literal %25
-			urlPath:     "/foo%25bar",      // URL with %25
+			objectKey:   "foo%25bar",  // Key contains literal %25
+			urlPath:     "/foo%25bar", // URL with %25
 			content:     "percent content",
 			description: "Escaped percent %25 should be preserved in the key, not decoded to %",
 		},
 		{
 			name:        "double dot slash prevented",
-			objectKey:   "safe%2F..%2Fetc", // Key contains escaped path traversal attempt
+			objectKey:   "safe%2F..%2Fetc",  // Key contains escaped path traversal attempt
 			urlPath:     "/safe%2F..%2Fetc", // URL with escaped ../
 			content:     "security content",
 			description: "Escaped path traversal sequences should stay escaped",
 		},
 		{
 			name:        "normal unescaped path",
-			objectKey:   "foo/bar/baz",    // Normal hierarchical key
-			urlPath:     "/foo/bar/baz",   // Normal path
+			objectKey:   "foo/bar/baz",  // Normal hierarchical key
+			urlPath:     "/foo/bar/baz", // Normal path
 			content:     "normal content",
 			description: "Normal unescaped paths should work as before",
 		},
