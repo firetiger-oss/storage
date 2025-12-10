@@ -29,9 +29,10 @@ var (
 )
 
 const (
-	ContentTypeJSON    = "application/json"
-	ContentTypeAvro    = "application/avro"
-	ContentTypeParquet = "application/vnd.apache.parquet"
+	ContentTypeJSON       = "application/json"
+	ContentTypeAvro       = "application/avro"
+	ContentTypeParquet    = "application/vnd.apache.parquet"
+	CacheControlImmutable = "public, max-age=31536000, immutable"
 )
 
 // Object is the type of values returned by the ListObjects method.
