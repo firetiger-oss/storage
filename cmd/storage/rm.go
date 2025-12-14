@@ -51,7 +51,8 @@ func runRm(cmd *cobra.Command, args []string) error {
 			}
 			results = append(results, deleteResults...)
 		} else {
-			result := rmResult{URI: objectURI, Deleted: true}
+			normalizedURI := normalizeURI(objectURI)
+			result := rmResult{URI: normalizedURI, Deleted: true}
 			if err := storage.DeleteObject(ctx, objectURI); err != nil {
 				if force && errors.Is(err, storage.ErrObjectNotFound) {
 					result.Deleted = false
@@ -60,7 +61,7 @@ func runRm(cmd *cobra.Command, args []string) error {
 				}
 			}
 			if output == "text" && result.Deleted {
-				cmd.Printf("deleted %s\n", objectURI)
+				cmd.Println(normalizedURI)
 			}
 			results = append(results, result)
 		}
@@ -92,7 +93,8 @@ func deleteRecursive(cmd *cobra.Command, prefix string, force bool, output strin
 
 	// Delete using batch API
 	for key, err := range storage.DeleteObjects(ctx, iter.Seq2[string, error](objects)) {
-		result := rmResult{URI: key, Deleted: true}
+		normalizedKey := normalizeURI(key)
+		result := rmResult{URI: normalizedKey, Deleted: true}
 		if err != nil {
 			if force && errors.Is(err, storage.ErrObjectNotFound) {
 				result.Deleted = false
@@ -101,7 +103,7 @@ func deleteRecursive(cmd *cobra.Command, prefix string, force bool, output strin
 			}
 		}
 		if output == "text" && result.Deleted {
-			cmd.Printf("deleted %s\n", key)
+			cmd.Println(normalizedKey)
 		}
 		results = append(results, result)
 	}

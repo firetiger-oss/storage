@@ -84,3 +84,9 @@ func outputJSON(cmd *cobra.Command, v any) error {
 	enc.SetIndent("", "  ")
 	return enc.Encode(v)
 }
+
+// normalizeURI returns the canonical form of a URI
+func normalizeURI(u string) string {
+	scheme, location, path := uri.Split(u)
+	return uri.Join(scheme, location, path)
+}

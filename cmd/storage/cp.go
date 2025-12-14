@@ -75,12 +75,10 @@ func runCp(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("copy to %s: %w", target, err)
 		}
-		result := cpResult{Source: "-", Target: target, Size: info.Size}
-		if output == "text" {
-			cmd.Printf("copied %s -> %s (%s)\n", source, target, btoa(info.Size))
-		} else {
-			return outputJSON(cmd, []cpResult{result})
+		if output == "json" {
+			return outputJSON(cmd, []cpResult{{Source: "-", Target: normalizeURI(target), Size: info.Size}})
 		}
+		cmd.Println(normalizeURI(target))
 		return nil
 	}
 
@@ -130,11 +128,11 @@ func runCp(cmd *cobra.Command, args []string) error {
 			if err != nil {
 				return err
 			}
-
-			if output == "text" {
-				cmd.Printf("copied %s -> %s (%s)\n", fullSourceURI, targetURI, btoa(result.Size))
+			if output == "json" {
+				results = append(results, result)
+			} else {
+				cmd.Println(result.Target)
 			}
-			results = append(results, result)
 		}
 
 		if output == "json" {
@@ -155,12 +153,10 @@ func runCp(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if output == "text" {
-		cmd.Printf("copied %s -> %s (%s)\n", source, targetURI, btoa(result.Size))
-	} else {
+	if output == "json" {
 		return outputJSON(cmd, []cpResult{result})
 	}
-
+	cmd.Println(normalizeURI(targetURI))
 	return nil
 }
 
@@ -206,7 +202,7 @@ func copyFile(cmd *cobra.Command, source, target string, opts cpOptions) (cpResu
 		return cpResult{}, fmt.Errorf("write %s: %w", target, err)
 	}
 
-	return cpResult{Source: source, Target: target, Size: resultInfo.Size}, nil
+	return cpResult{Source: normalizeURI(source), Target: normalizeURI(target), Size: resultInfo.Size}, nil
 }
 
 func buildPutOptions(opts cpOptions) []storage.PutOption {
