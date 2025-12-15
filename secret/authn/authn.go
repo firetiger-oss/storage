@@ -59,10 +59,9 @@ func NewHandler(auth Authenticator, next http.Handler) http.Handler {
 	})
 }
 
-// Credentials is a constraint interface for types that can validate a password.
-// Implementations should store the password hash and perform secure comparison.
+// Credentials is a constraint interface for types that can validate a token.
 type Credentials interface {
-	Validate(username, password string) bool
+	Validate(token secret.Value) bool
 }
 
 // NewBasicAuthenticator returns an Authenticator that uses HTTP Basic Authentication.
@@ -108,7 +107,7 @@ func NewBasicAuthenticator[C Credentials](store secret.Store) Authenticator {
 		if err != nil {
 			return nil, err
 		}
-		if !credentials.Validate(username, password) {
+		if !credentials.Validate(secret.Value(password)) {
 			return nil, ErrUnauthorized
 		}
 		return ContextWithCredentials(ctx, credentials), nil

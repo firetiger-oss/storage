@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"net/http"
 
 	"github.com/spf13/cobra"
@@ -25,7 +26,7 @@ var serveCmd = &cobra.Command{
 }
 
 func init() {
-	serveCmd.Flags().String("http", ":8080", "HTTP server address")
+	serveCmd.Flags().String("http", ":8184", "HTTP server address")
 	serveCmd.Flags().String("basic-auth-username", "", "Username for basic auth")
 	serveCmd.Flags().String("basic-auth-secret-id", "", "Secret store URI for basic auth credentials")
 }
@@ -33,16 +34,15 @@ func init() {
 // basicAuthCredentials stores a password for basic auth validation.
 // The secret value must be JSON: {"password": "..."}
 type basicAuthCredentials struct {
-	username string
-	password string
+	password secret.Value
 }
 
-func (c basicAuthCredentials) Validate(username, password string) bool {
-	return c.username == username && c.password == password
+func (c basicAuthCredentials) Validate(password secret.Value) bool {
+	return subtle.ConstantTimeCompare(c.password, password) == 1
 }
 
 func (c *basicAuthCredentials) UnmarshalText(data []byte) error {
-	c.password = string(data)
+	c.password = data
 	return nil
 }
 

@@ -2,6 +2,7 @@ package authn
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
@@ -17,8 +18,8 @@ type testCredentials struct {
 	Role     string `json:"role"`
 }
 
-func (c testCredentials) Validate(username, password string) bool {
-	return c.Username == username && c.Password == password
+func (c testCredentials) Validate(password secret.Value) bool {
+	return subtle.ConstantTimeCompare([]byte(c.Password), password) == 1
 }
 
 func TestAuthenticatorFunc(t *testing.T) {
