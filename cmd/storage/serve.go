@@ -2,8 +2,8 @@ package main
 
 import (
 	"context"
-	"crypto/subtle"
 	"net/http"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -32,18 +32,24 @@ func init() {
 }
 
 // basicAuthCredentials stores a password for basic auth validation.
-// The secret value must be JSON: {"password": "..."}
-type basicAuthCredentials struct {
-	password secret.Value
+type basicAuthCredentials string
+
+func (c basicAuthCredentials) String() string {
+	return secret.Value(c).String()
 }
 
-func (c basicAuthCredentials) Validate(password secret.Value) bool {
-	return subtle.ConstantTimeCompare(c.password, password) == 1
+func (c basicAuthCredentials) GoString() string {
+	return secret.Value(c).GoString()
 }
 
-func (c *basicAuthCredentials) UnmarshalText(data []byte) error {
-	c.password = data
-	return nil
+func (c basicAuthCredentials) Username() string {
+	username, _, _ := strings.Cut(string(c), ":")
+	return username
+}
+
+func (c basicAuthCredentials) Password() string {
+	_, password, _ := strings.Cut(string(c), ":")
+	return password
 }
 
 func runServe(cmd *cobra.Command, args []string) error {
@@ -63,14 +69,18 @@ func runServe(cmd *cobra.Command, args []string) error {
 	handler := storagehttp.BucketHandler(bucket)
 
 	if basicAuthSecretID != "" {
+		http.DefaultTransport = authn.NewBasicAuthForwarder[basicAuthCredentials](http.DefaultTransport)
+
 		auth := authn.NewBasicAuthenticator[basicAuthCredentials](
 			secret.StoreFunc(func(ctx context.Context, name string, options ...secret.GetOption) (secret.Value, secret.Info, error) {
 				if name != basicAuthUsername {
-					return secret.Value{}, secret.Info{}, secret.ErrNotFound
+					return nil, secret.Info{}, secret.ErrNotFound
 				}
-				return secret.Get(ctx, basicAuthSecretID, options...)
+				value, info, err := secret.Get(ctx, basicAuthSecretID, options...)
+				return secret.Value(basicAuthUsername + ":" + string(value)), info, err
 			}),
 		)
+
 		handler = authn.NewHandler(auth, handler)
 	}
 

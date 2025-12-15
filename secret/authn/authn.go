@@ -3,6 +3,7 @@ package authn
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding"
 	"encoding/json"
 	"errors"
@@ -59,16 +60,17 @@ func NewHandler(auth Authenticator, next http.Handler) http.Handler {
 	})
 }
 
-// Credentials is a constraint interface for types that can validate a token.
-type Credentials interface {
-	Validate(token secret.Value) bool
+// BasicAuthCredentials provides username and password for HTTP Basic Auth.
+type BasicAuthCredentials interface {
+	Username() string
+	Password() string
 }
 
 // NewBasicAuthenticator returns an Authenticator that uses HTTP Basic Authentication.
-// C must implement Credentials and be JSON-deserializable.
+// C must implement BasicAuthCredentials and be JSON-deserializable.
 // Uses the username from Basic Auth as the secret name.
 // Injects credentials into context via ContextWithCredentials[C].
-func NewBasicAuthenticator[C Credentials](store secret.Store) Authenticator {
+func NewBasicAuthenticator[C BasicAuthCredentials](store secret.Store) Authenticator {
 	return AuthenticatorFunc(func(ctx context.Context, req *http.Request) (context.Context, error) {
 		username, password, ok := req.BasicAuth()
 		if !ok {
@@ -107,9 +109,28 @@ func NewBasicAuthenticator[C Credentials](store secret.Store) Authenticator {
 		if err != nil {
 			return nil, err
 		}
-		if !credentials.Validate(secret.Value(password)) {
+		if subtle.ConstantTimeCompare([]byte(credentials.Password()), []byte(password)) != 1 {
 			return nil, ErrUnauthorized
 		}
 		return ContextWithCredentials(ctx, credentials), nil
 	})
+}
+
+// NewBasicAuthForwarder returns an http.RoundTripper that injects Basic Auth
+// credentials from the context into outbound requests. If the context has no
+// credentials, requests pass through unchanged.
+func NewBasicAuthForwarder[Credentials BasicAuthCredentials](t http.RoundTripper) http.RoundTripper {
+	return roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		if creds, ok := CredentialsFromContext[Credentials](req.Context()); ok {
+			req = req.Clone(req.Context())
+			req.SetBasicAuth(creds.Username(), creds.Password())
+		}
+		return t.RoundTrip(req)
+	})
+}
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
 }
