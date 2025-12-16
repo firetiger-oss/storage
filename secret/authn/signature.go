@@ -20,12 +20,12 @@ type SignedURLCredential struct {
 // It uses secret.Verify to validate the signature and extracts credential from the URL.
 // On success, injects SignedURLCredential into context via ContextWithCredential.
 // Returns ErrNotFound if the URL has no signature parameters.
-func NewSignedURLAuthenticator(store secret.Store) Authenticator {
+func NewSignedURLAuthenticator(provider secret.Provider) Authenticator {
 	return AuthenticatorFunc(func(ctx context.Context, req *http.Request) (context.Context, error) {
 		if !secret.HasSignature(req.URL) {
 			return nil, ErrNotFound
 		}
-		if err := secret.Verify(ctx, store, req.Method, req.URL, time.Now()); err != nil {
+		if err := secret.Verify(ctx, provider, req.Method, req.URL, time.Now()); err != nil {
 			return nil, err
 		}
 		credential := SignedURLCredential{

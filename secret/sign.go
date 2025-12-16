@@ -31,22 +31,22 @@ type Signer interface {
 }
 
 // NewHMAC256 creates a Signer that uses HMAC-SHA256 for URL signing.
-// The store is used to fetch the secret value on each Sign call.
+// The provider is used to fetch the secret value on each Sign call.
 // The secretID is embedded in the URL as the 's' parameter.
-func NewHMAC256(store Store, secretID string) Signer {
+func NewHMAC256(provider Provider, secretID string) Signer {
 	return &hmac256Signer{
-		store:    store,
+		provider: provider,
 		secretID: secretID,
 	}
 }
 
 type hmac256Signer struct {
-	store    Store
+	provider Provider
 	secretID string
 }
 
 func (s *hmac256Signer) Sign(ctx context.Context, method string, u *url.URL, expiration time.Time) (string, error) {
-	value, info, err := s.store.GetSecret(ctx, s.secretID)
+	value, info, err := s.provider.GetSecret(ctx, s.secretID)
 	if err != nil {
 		return "", err
 	}
@@ -78,7 +78,7 @@ func (s *hmac256Signer) Sign(ctx context.Context, method string, u *url.URL, exp
 //   - ErrSignatureMissing: required parameters are missing
 //   - ErrSignatureExpired: the signature has expired
 //   - ErrSignatureInvalid: the signature does not match
-func Verify(ctx context.Context, store Store, method string, u *url.URL, now time.Time) error {
+func Verify(ctx context.Context, provider Provider, method string, u *url.URL, now time.Time) error {
 	q := u.Query()
 
 	secretID := q.Get("s")
@@ -103,7 +103,7 @@ func Verify(ctx context.Context, store Store, method string, u *url.URL, now tim
 		return ErrSignatureInvalid
 	}
 
-	value, _, err := store.GetSecret(ctx, secretID, WithVersion(q.Get("v")))
+	value, _, err := provider.GetSecret(ctx, secretID, WithVersion(q.Get("v")))
 	if err != nil {
 		if errors.Is(err, ErrNotFound) || errors.Is(err, ErrVersionNotFound) {
 			return ErrSignatureInvalid

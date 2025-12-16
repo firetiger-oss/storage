@@ -47,10 +47,10 @@ func (f LoaderFunc[C]) Load(ctx context.Context, id string) (C, error) {
 	return f(ctx, id)
 }
 
-// NewLoader returns a Loader that loads credentials from a secret.Store.
-func NewLoader[C any](store secret.Store) Loader[C] {
+// NewLoader returns a Loader that loads credentials from a secret.Provider.
+func NewLoader[C any](provider secret.Provider) Loader[C] {
 	return LoaderFunc[C](func(ctx context.Context, id string) (C, error) {
-		value, _, err := store.GetSecret(ctx, id)
+		value, _, err := provider.GetSecret(ctx, id)
 		if err != nil {
 			var zero C
 			return zero, err

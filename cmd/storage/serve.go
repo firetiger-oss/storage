@@ -84,7 +84,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		http.DefaultTransport = authn.NewBasicAuthForwarder(http.DefaultTransport)
 
 		authenticators = append(authenticators, authn.NewBasicAuthenticator(
-			authn.NewLoader[basicAuthCredential](secret.StoreFunc(func(ctx context.Context, name string, options ...secret.GetOption) (secret.Value, secret.Info, error) {
+			authn.NewLoader[basicAuthCredential](secret.ProviderFunc(func(ctx context.Context, name string, options ...secret.GetOption) (secret.Value, secret.Info, error) {
 				if name != basicAuthUsername {
 					return nil, secret.Info{}, secret.ErrNotFound
 				}

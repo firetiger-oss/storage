@@ -2,9 +2,9 @@ package secret
 
 import "context"
 
-// Store provides read-only access to secrets by name.
+// Provider provides read-only access to secrets by name.
 // Manager implements this interface.
-type Store interface {
+type Provider interface {
 	// GetSecret retrieves a secret by name.
 	// Use WithVersion to retrieve a specific version.
 	// Returns ErrNotFound if the secret does not exist.
@@ -12,10 +12,10 @@ type Store interface {
 	GetSecret(ctx context.Context, name string, options ...GetOption) (Value, Info, error)
 }
 
-// StoreFunc is a function adapter for Store.
-type StoreFunc func(ctx context.Context, name string, options ...GetOption) (Value, Info, error)
+// ProviderFunc is a function adapter for Provider.
+type ProviderFunc func(ctx context.Context, name string, options ...GetOption) (Value, Info, error)
 
-// GetSecret implements Store.
-func (f StoreFunc) GetSecret(ctx context.Context, name string, options ...GetOption) (Value, Info, error) {
+// GetSecret implements Provider.
+func (f ProviderFunc) GetSecret(ctx context.Context, name string, options ...GetOption) (Value, Info, error) {
 	return f(ctx, name, options...)
 }
