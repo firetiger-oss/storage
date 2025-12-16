@@ -25,11 +25,10 @@ type mockClient struct {
 }
 
 type mockSecret struct {
-	name        string
-	labels      map[string]string
-	versions    []*mockVersion
-	createdAt   time.Time
-	description string
+	name      string
+	labels    map[string]string
+	versions  []*mockVersion
+	createdAt time.Time
 }
 
 type mockVersion struct {
