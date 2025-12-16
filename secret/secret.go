@@ -40,9 +40,12 @@ package secret
 import (
 	"context"
 	"errors"
+	"flag"
 	"iter"
 	"time"
 )
+
+var _ flag.Value = (*Value)(nil)
 
 // Value holds secret data with a safe string representation to prevent
 // accidental logging or printing of sensitive data.
@@ -53,6 +56,12 @@ func (v Value) String() string { return "REDACTED" }
 
 // GoString returns a safe representation for %#v formatting.
 func (v Value) GoString() string { return `secret.Value("REDACTED")` }
+
+// Set sets the value from a string. This implements flag.Value.
+func (v *Value) Set(s string) error {
+	*v = Value(s)
+	return nil
+}
 
 // Manager is the primary interface for secret management operations.
 // It provides CRUD operations, listing, and versioning capabilities.
