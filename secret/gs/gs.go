@@ -11,37 +11,12 @@
 package gs
 
 import (
-	"context"
-	"strings"
-
-	"github.com/firetiger-oss/storage"
 	"github.com/firetiger-oss/storage/secret"
+	"github.com/firetiger-oss/storage/secret/bucket"
 
 	_ "github.com/firetiger-oss/storage/gs" // register gs storage backend
 )
 
-type registry struct{}
-
 func init() {
-	secret.Register(`^gs://`, registry{})
-}
-
-func (registry) LoadManager(ctx context.Context, identifier string) (secret.Manager, error) {
-	bucket, err := storage.LoadBucket(ctx, identifier)
-	if err != nil {
-		return nil, err
-	}
-	return secret.NewManager(bucket), nil
-}
-
-func (registry) ParseSecret(identifier string) (managerID, secretName string, err error) {
-	// Format: gs://bucket-name/secret-name
-	// Split at the last slash to separate bucket from secret name
-	if idx := strings.LastIndex(identifier, "/"); idx > len("gs://") {
-		managerID = identifier[:idx]
-		secretName = identifier[idx+1:]
-	} else {
-		managerID = identifier
-	}
-	return
+	secret.Register(`^gs://`, bucket.Registry{})
 }
