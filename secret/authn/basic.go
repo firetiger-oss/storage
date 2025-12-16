@@ -52,13 +52,16 @@ func NewBasicAuthenticator[C BasicAuthCredential](loader Loader[C]) Authenticato
 
 // NewBasicAuthForwarder returns an http.RoundTripper that injects Basic Auth
 // credential from the context into outbound requests. If the context has no
-// credential, requests pass through unchanged.
+// credential or the request already has an Authorization header, requests pass
+// through unchanged.
 func NewBasicAuthForwarder(t http.RoundTripper) http.RoundTripper {
 	return roundTripperFunc(func(req *http.Request) (*http.Response, error) {
-		if cred, ok := CredentialFromContext[BasicAuthCredential](req.Context()); ok {
-			if domainContains(domainFromContext(req.Context()), hostname(req)) {
-				req = req.Clone(req.Context())
-				req.SetBasicAuth(cred.Username(), cred.Password())
+		if !hasAuthorization(req) {
+			if cred, ok := CredentialFromContext[BasicAuthCredential](req.Context()); ok {
+				if domainContains(domainFromContext(req.Context()), hostname(req)) {
+					req = req.Clone(req.Context())
+					req.SetBasicAuth(cred.Username(), cred.Password())
+				}
 			}
 		}
 		return t.RoundTrip(req)
@@ -66,11 +69,12 @@ func NewBasicAuthForwarder(t http.RoundTripper) http.RoundTripper {
 }
 
 // NewBasicAuthTransport returns an http.RoundTripper that loads Basic Auth
-// credential and injects it into outbound requests.
+// credential and injects it into outbound requests. If the request already has
+// an Authorization header, it passes through unchanged.
 // The credential is loaded on each request using the provided secret name.
 func NewBasicAuthTransport[Credential BasicAuthCredential](loader Loader[Credential], secretName, domain string, transport http.RoundTripper) http.RoundTripper {
 	return roundTripperFunc(func(req *http.Request) (*http.Response, error) {
-		if domainContains(domain, hostname(req)) {
+		if !hasAuthorization(req) && domainContains(domain, hostname(req)) {
 			cred, err := loader.Load(req.Context(), secretName)
 			if err != nil {
 				return nil, err
@@ -104,4 +108,8 @@ func hostname(req *http.Request) string {
 		return cmp.Or(host, req.Host)
 	}
 	return req.URL.Hostname()
+}
+
+func hasAuthorization(req *http.Request) bool {
+	return req.Header.Get("Authorization") != ""
 }
