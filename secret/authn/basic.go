@@ -98,8 +98,9 @@ func domainFromContext(ctx context.Context) string {
 }
 
 func domainContains(domain, hostname string) bool {
-	return strings.HasSuffix(hostname, domain) &&
-		(len(hostname) == len(domain) || hostname[len(hostname)-len(domain)-1] == '.')
+	return domain == "*" ||
+		(strings.HasSuffix(hostname, domain) &&
+			(len(hostname) == len(domain) || hostname[len(hostname)-len(domain)-1] == '.'))
 }
 
 func hostname(req *http.Request) string {
