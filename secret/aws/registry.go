@@ -39,30 +39,15 @@ func (r *registry) LoadManager(ctx context.Context, identifier string) (secret.M
 }
 
 func (r *registry) ParseSecret(identifier string) (managerID, secretName string, err error) {
-	matches := arnPattern.FindStringSubmatch(identifier)
-	if matches == nil {
+	arn, name, ok := strings.Cut(identifier, ":secret:")
+	if !ok {
 		return "", "", fmt.Errorf("invalid AWS Secrets Manager ARN: cannot parse %q", identifier)
 	}
-
-	partition := matches[1]
-	service := matches[2]
-	region := matches[3]
-	account := matches[4]
-	resource := matches[5]
-
-	if service != "secretsmanager" {
-		return "", "", fmt.Errorf("invalid AWS Secrets Manager ARN: expected service 'secretsmanager', got %q", service)
+	if i := strings.LastIndexByte(name, ':'); i >= 0 {
+		name = name[:i] // trim stage qualifier
 	}
-
-	// Resource format is "secret:NAME[-SUFFIX]"
-	// Extract the secret name from after "secret:"
-	if !strings.HasPrefix(resource, "secret:") {
-		return "", "", fmt.Errorf("invalid AWS Secrets Manager ARN: expected resource type 'secret:', got %q", resource)
+	if i := strings.LastIndexByte(name, '-'); i >= 0 {
+		name = name[:i] // trim random suffix
 	}
-	secretName = strings.TrimPrefix(resource, "secret:")
-
-	// Manager ID is the ARN prefix without the resource
-	managerID = "arn:" + partition + ":" + service + ":" + region + ":" + account
-
-	return managerID, secretName, nil
+	return arn, name, nil
 }

@@ -338,24 +338,31 @@ func TestRegistryParseSecret(t *testing.T) {
 		wantErr        bool
 	}{
 		{
-			name:           "valid ARN",
+			name:           "valid ARN with suffix",
 			identifier:     "arn:aws:secretsmanager:us-east-1:123456789012:secret:my-secret-AbCdEf",
-			wantManagerID:  "arn:aws:secretsmanager:us-east-1:123456789012",
-			wantSecretName: "my-secret-AbCdEf",
-			wantErr:        false,
-		},
-		{
-			name:           "ARN without suffix",
-			identifier:     "arn:aws:secretsmanager:us-east-1:123456789012:secret:my-secret",
 			wantManagerID:  "arn:aws:secretsmanager:us-east-1:123456789012",
 			wantSecretName: "my-secret",
 			wantErr:        false,
 		},
 		{
-			name:           "secret with slashes",
-			identifier:     "arn:aws:secretsmanager:us-east-1:123456789012:secret:app/database/password",
+			name:           "secret with slashes and suffix",
+			identifier:     "arn:aws:secretsmanager:us-east-1:123456789012:secret:app/database/password-xY9zAb",
 			wantManagerID:  "arn:aws:secretsmanager:us-east-1:123456789012",
 			wantSecretName: "app/database/password",
+			wantErr:        false,
+		},
+		{
+			name:           "ARN with suffix and AWSCURRENT qualifier",
+			identifier:     "arn:aws:secretsmanager:us-east-1:123456789012:secret:my-secret-AbCdEf:AWSCURRENT",
+			wantManagerID:  "arn:aws:secretsmanager:us-east-1:123456789012",
+			wantSecretName: "my-secret",
+			wantErr:        false,
+		},
+		{
+			name:           "ARN with suffix and AWSPREVIOUS qualifier",
+			identifier:     "arn:aws:secretsmanager:us-east-1:123456789012:secret:my-secret-AbCdEf:AWSPREVIOUS",
+			wantManagerID:  "arn:aws:secretsmanager:us-east-1:123456789012",
+			wantSecretName: "my-secret",
 			wantErr:        false,
 		},
 		{
