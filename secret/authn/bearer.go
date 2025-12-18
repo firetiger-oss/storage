@@ -62,10 +62,7 @@ func NewBearerAuthForwarder(t http.RoundTripper) http.RoundTripper {
 // credential and injects it into outbound requests. If the request already has
 // an Authorization header, it passes through unchanged.
 // Credentials are cached and refreshed on 401 responses.
-func NewBearerAuthTransport[Credential interface {
-	BearerCredential
-	comparable
-}](loader Loader[Credential], secretName, domain string, transport http.RoundTripper) http.RoundTripper {
+func NewBearerAuthTransport[Credential BearerCredential](loader Loader[Credential], secretName, domain string, transport http.RoundTripper) http.RoundTripper {
 	return NewAuthTransport(loader, secretName, domain, transport, NewBearerScheme[Credential](""))
 }
 

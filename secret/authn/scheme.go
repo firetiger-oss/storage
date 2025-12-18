@@ -7,7 +7,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
-	"sync"
+	"sync/atomic"
 
 	"github.com/firetiger-oss/storage/secret"
 	"golang.org/x/net/publicsuffix"
@@ -79,28 +79,27 @@ func NewAuthForwarder[C any, S Scheme[C]](transport http.RoundTripper, scheme S)
 // If the request already has an Authorization header, it passes through unchanged.
 //
 // Credentials are cached and reused across requests. On 401 responses,
-// the transport reloads the credential and retries the request once if the
-// credential has changed.
-func NewAuthTransport[C comparable, S Scheme[C]](loader Loader[C], secretName, domain string, transport http.RoundTripper, scheme S) http.RoundTripper {
+// the transport reloads the credential and retries the request once.
+func NewAuthTransport[C any, S Scheme[C]](loader Loader[C], secretName, domain string, transport http.RoundTripper, scheme S) http.RoundTripper {
 	return &cachingTransport[C, S]{
 		loader:     loader,
 		secretName: secretName,
 		domain:     domain,
 		transport:  transport,
 		scheme:     scheme,
+		lock:       make(chan struct{}, 1),
 	}
 }
 
-type cachingTransport[C comparable, S Scheme[C]] struct {
+type cachingTransport[C any, S Scheme[C]] struct {
 	loader     Loader[C]
 	secretName string
 	domain     string
 	transport  http.RoundTripper
 	scheme     S
 
-	mu     sync.Mutex
-	cached C
-	loaded bool
+	lock   chan struct{}
+	cached atomic.Pointer[C]
 }
 
 func (t *cachingTransport[C, S]) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -114,15 +113,15 @@ func (t *cachingTransport[C, S]) RoundTrip(req *http.Request) (*http.Response, e
 	}
 
 	req = req.Clone(req.Context())
-	t.scheme.Inject(req, cred)
+	t.scheme.Inject(req, *cred)
 
 	resp, err := t.transport.RoundTrip(req)
 	if err != nil || resp.StatusCode != http.StatusUnauthorized {
 		return resp, err
 	}
 
-	newCred, err := t.refresh(req.Context())
-	if err != nil || newCred == cred {
+	newCred, err := t.load(req.Context())
+	if err != nil {
 		return resp, nil
 	}
 
@@ -135,40 +134,32 @@ func (t *cachingTransport[C, S]) RoundTrip(req *http.Request) (*http.Response, e
 	}
 
 	resp.Body.Close()
-	t.scheme.Inject(req, newCred)
+	t.scheme.Inject(req, *newCred)
 	return t.transport.RoundTrip(req)
 }
 
-func (t *cachingTransport[C, S]) credential(ctx context.Context) (C, error) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	if t.loaded {
-		return t.cached, nil
+func (t *cachingTransport[C, S]) credential(ctx context.Context) (*C, error) {
+	if p := t.cached.Load(); p != nil {
+		return p, nil
 	}
-
-	cred, err := t.loader.Load(ctx, t.secretName)
-	if err != nil {
-		return t.cached, err
-	}
-
-	t.cached = cred
-	t.loaded = true
-	return cred, nil
+	return t.load(ctx)
 }
 
-func (t *cachingTransport[C, S]) refresh(ctx context.Context) (C, error) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
+func (t *cachingTransport[C, S]) load(ctx context.Context) (*C, error) {
+	select {
+	case t.lock <- struct{}{}:
+		defer func() { <-t.lock }()
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 
 	cred, err := t.loader.Load(ctx, t.secretName)
 	if err != nil {
-		return t.cached, err
+		return nil, err
 	}
 
-	t.cached = cred
-	t.loaded = true
-	return cred, nil
+	t.cached.Store(&cred)
+	return &cred, nil
 }
 
 type roundTripperFunc func(*http.Request) (*http.Response, error)

@@ -603,41 +603,6 @@ func TestCachingTransport(t *testing.T) {
 		}
 	})
 
-	t.Run("no retry when credential unchanged", func(t *testing.T) {
-		loadCount := 0
-		store := secret.ProviderFunc(func(ctx context.Context, name string, options ...secret.GetOption) (secret.Value, string, error) {
-			loadCount++
-			return secret.Value("alice:secret123"), "", nil
-		})
-
-		requestCount := 0
-		transport := roundTripperFunc(func(req *http.Request) (*http.Response, error) {
-			requestCount++
-			return &http.Response{
-				StatusCode: http.StatusUnauthorized,
-				Body:       http.NoBody,
-			}, nil
-		})
-
-		authTransport := NewBasicAuthTransport(NewLoader[stringCredential](store), "my-secret", "example.com", transport)
-
-		req := httptest.NewRequest("GET", "http://example.com/api", nil)
-		resp, err := authTransport.RoundTrip(req)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if resp.StatusCode != http.StatusUnauthorized {
-			t.Errorf("expected 401 (no retry when credential unchanged), got %d", resp.StatusCode)
-		}
-
-		if loadCount != 2 {
-			t.Errorf("expected 2 loads (initial + refresh attempt), got %d", loadCount)
-		}
-		if requestCount != 1 {
-			t.Errorf("expected 1 request (no retry), got %d", requestCount)
-		}
-	})
-
 	t.Run("retries only once", func(t *testing.T) {
 		loadCount := 0
 		store := secret.ProviderFunc(func(ctx context.Context, name string, options ...secret.GetOption) (secret.Value, string, error) {
