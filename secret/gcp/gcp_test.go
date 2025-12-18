@@ -429,6 +429,7 @@ func TestRegistryParseSecret(t *testing.T) {
 		identifier     string
 		wantManagerID  string
 		wantSecretName string
+		wantVersion    string
 		wantErr        bool
 	}{
 		{
@@ -436,34 +437,52 @@ func TestRegistryParseSecret(t *testing.T) {
 			identifier:     "projects/my-project/secrets/my-secret",
 			wantManagerID:  "projects/my-project",
 			wantSecretName: "my-secret",
-			wantErr:        false,
 		},
 		{
 			name:           "resource name with version",
 			identifier:     "projects/my-project/secrets/my-secret/versions/1",
 			wantManagerID:  "projects/my-project",
 			wantSecretName: "my-secret",
-			wantErr:        false,
+			wantVersion:    "1",
 		},
 		{
-			name:           "invalid resource name",
-			identifier:     "invalid",
-			wantManagerID:  "",
-			wantSecretName: "",
-			wantErr:        true,
+			name:          "manager ID only",
+			identifier:    "projects/my-project",
+			wantManagerID: "projects/my-project",
 		},
 		{
-			name:           "incomplete resource name",
-			identifier:     "projects/my-project",
-			wantManagerID:  "",
-			wantSecretName: "",
-			wantErr:        true,
+			name:          "manager ID with secrets but no name",
+			identifier:    "projects/my-project/secrets",
+			wantManagerID: "projects/my-project",
+		},
+		{
+			name:           "locations format",
+			identifier:     "projects/my-project/locations/us-east1/secrets/my-secret",
+			wantManagerID:  "projects/my-project",
+			wantSecretName: "my-secret",
+		},
+		{
+			name:           "locations format with version",
+			identifier:     "projects/my-project/locations/us-east1/secrets/my-secret/versions/1",
+			wantManagerID:  "projects/my-project",
+			wantSecretName: "my-secret",
+			wantVersion:    "1",
+		},
+		{
+			name:          "locations without secrets",
+			identifier:    "projects/my-project/locations/us-east1",
+			wantManagerID: "projects/my-project",
+		},
+		{
+			name:       "invalid resource name",
+			identifier: "invalid",
+			wantErr:    true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotManagerID, gotSecretName, err := reg.ParseSecret(tt.identifier)
+			gotManagerID, gotSecretName, gotVersion, err := reg.ParseSecret(tt.identifier)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ParseSecret() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -473,6 +492,9 @@ func TestRegistryParseSecret(t *testing.T) {
 			}
 			if gotSecretName != tt.wantSecretName {
 				t.Errorf("ParseSecret() secretName = %v, want %v", gotSecretName, tt.wantSecretName)
+			}
+			if gotVersion != tt.wantVersion {
+				t.Errorf("ParseSecret() version = %v, want %v", gotVersion, tt.wantVersion)
 			}
 		})
 	}

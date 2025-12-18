@@ -335,6 +335,7 @@ func TestRegistryParseSecret(t *testing.T) {
 		identifier     string
 		wantManagerID  string
 		wantSecretName string
+		wantVersion    string
 		wantErr        bool
 	}{
 		{
@@ -342,48 +343,47 @@ func TestRegistryParseSecret(t *testing.T) {
 			identifier:     "arn:aws:secretsmanager:us-east-1:123456789012:secret:my-secret-AbCdEf",
 			wantManagerID:  "arn:aws:secretsmanager:us-east-1:123456789012",
 			wantSecretName: "my-secret",
-			wantErr:        false,
 		},
 		{
 			name:           "secret with slashes and suffix",
 			identifier:     "arn:aws:secretsmanager:us-east-1:123456789012:secret:app/database/password-xY9zAb",
 			wantManagerID:  "arn:aws:secretsmanager:us-east-1:123456789012",
 			wantSecretName: "app/database/password",
-			wantErr:        false,
 		},
 		{
 			name:           "ARN with suffix and AWSCURRENT qualifier",
 			identifier:     "arn:aws:secretsmanager:us-east-1:123456789012:secret:my-secret-AbCdEf:AWSCURRENT",
 			wantManagerID:  "arn:aws:secretsmanager:us-east-1:123456789012",
 			wantSecretName: "my-secret",
-			wantErr:        false,
+			wantVersion:    "AWSCURRENT",
 		},
 		{
 			name:           "ARN with suffix and AWSPREVIOUS qualifier",
 			identifier:     "arn:aws:secretsmanager:us-east-1:123456789012:secret:my-secret-AbCdEf:AWSPREVIOUS",
 			wantManagerID:  "arn:aws:secretsmanager:us-east-1:123456789012",
 			wantSecretName: "my-secret",
-			wantErr:        false,
+			wantVersion:    "AWSPREVIOUS",
 		},
 		{
-			name:           "invalid ARN",
-			identifier:     "invalid",
-			wantManagerID:  "",
-			wantSecretName: "",
-			wantErr:        true,
+			name:          "manager ID without secret",
+			identifier:    "arn:aws:secretsmanager:us-east-1:123456789012",
+			wantManagerID: "arn:aws:secretsmanager:us-east-1:123456789012",
 		},
 		{
-			name:           "incomplete ARN",
-			identifier:     "arn:aws:secretsmanager:us-east-1",
-			wantManagerID:  "",
-			wantSecretName: "",
-			wantErr:        true,
+			name:          "incomplete ARN treated as manager ID",
+			identifier:    "arn:aws:secretsmanager:us-east-1",
+			wantManagerID: "arn:aws:secretsmanager:us-east-1",
+		},
+		{
+			name:       "non-ARN string",
+			identifier: "invalid",
+			wantErr:    true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotManagerID, gotSecretName, err := reg.ParseSecret(tt.identifier)
+			gotManagerID, gotSecretName, gotVersion, err := reg.ParseSecret(tt.identifier)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ParseSecret() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -393,6 +393,9 @@ func TestRegistryParseSecret(t *testing.T) {
 			}
 			if gotSecretName != tt.wantSecretName {
 				t.Errorf("ParseSecret() secretName = %v, want %v", gotSecretName, tt.wantSecretName)
+			}
+			if gotVersion != tt.wantVersion {
+				t.Errorf("ParseSecret() version = %v, want %v", gotVersion, tt.wantVersion)
 			}
 		})
 	}

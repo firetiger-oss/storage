@@ -23,7 +23,7 @@ func TestRegister(t *testing.T) {
 	}()
 
 	mockReg := &mockRegistry{}
-	Register(`^test://`, mockReg)
+	Register("test://", mockReg)
 
 	globalMutex.RLock()
 	count := len(globalRegistries)
@@ -50,7 +50,7 @@ func TestLoadManager(t *testing.T) {
 	mockReg := &mockRegistry{
 		manager: NewManager(memory.NewBucket()),
 	}
-	Register(`^test://`, mockReg)
+	Register("test://", mockReg)
 
 	ctx := t.Context()
 	manager, err := LoadManager(ctx, "test://location")
@@ -113,7 +113,7 @@ func TestCreateGlobalFunction(t *testing.T) {
 	ctx := t.Context()
 	mgr := NewManager(memory.NewBucket())
 	mockReg := &mockRegistry{manager: mgr}
-	Register(`^test://`, mockReg)
+	Register("test://", mockReg)
 
 	info, err := Create(ctx, "test://location/my-secret", Value("value"))
 	if err != nil {
@@ -147,7 +147,7 @@ func TestGetGlobalFunction(t *testing.T) {
 	mgr := NewManager(memory.NewBucket())
 	mgr.CreateSecret(ctx, "my-secret", Value("value"))
 	mockReg := &mockRegistry{manager: mgr}
-	Register(`^test://`, mockReg)
+	Register("test://", mockReg)
 
 	value, version, err := Get(ctx, "test://location/my-secret")
 	if err != nil {
@@ -179,7 +179,7 @@ func TestUpdateGlobalFunction(t *testing.T) {
 	mgr := NewManager(memory.NewBucket())
 	mgr.CreateSecret(ctx, "my-secret", Value("old-value"))
 	mockReg := &mockRegistry{manager: mgr}
-	Register(`^test://`, mockReg)
+	Register("test://", mockReg)
 
 	info, err := Update(ctx, "test://location/my-secret", Value("new-value"))
 	if err != nil {
@@ -216,7 +216,7 @@ func TestDeleteGlobalFunction(t *testing.T) {
 	mgr := NewManager(memory.NewBucket())
 	mgr.CreateSecret(ctx, "my-secret", Value("value"))
 	mockReg := &mockRegistry{manager: mgr}
-	Register(`^test://`, mockReg)
+	Register("test://", mockReg)
 
 	err := Delete(ctx, "test://location/my-secret")
 	if err != nil {
@@ -247,7 +247,7 @@ func TestListGlobalFunction(t *testing.T) {
 	mgr.CreateSecret(ctx, "secret1", Value("value1"))
 	mgr.CreateSecret(ctx, "secret2", Value("value2"))
 	mockReg := &mockRegistry{manager: mgr}
-	Register(`^test://`, mockReg)
+	Register("test://", mockReg)
 
 	count := 0
 	for _, err := range List(ctx, "test://location") {
@@ -340,17 +340,17 @@ func (r *mockRegistry) LoadManager(ctx context.Context, identifier string) (Mana
 	return r.manager, nil
 }
 
-func (r *mockRegistry) ParseSecret(identifier string) (string, string, error) {
+func (r *mockRegistry) ParseSecret(identifier string) (string, string, string, error) {
 	// Simple parsing: test://location/name
 	rest, ok := strings.CutPrefix(identifier, "test://")
 	if !ok {
-		return "", "", fmt.Errorf("invalid test identifier")
+		return "", "", "", fmt.Errorf("invalid test identifier")
 	}
 	location, secretName, ok := strings.Cut(rest, "/")
 	if !ok {
 		// No secret name, just manager
-		return identifier, "", nil
+		return identifier, "", "", nil
 	}
 	managerID := "test://" + location
-	return managerID, secretName, nil
+	return managerID, secretName, "", nil
 }

@@ -21,5 +21,6 @@ import (
 )
 
 func init() {
-	secret.Register(`^https?://`, bucket.Registry{})
+	secret.Register("http:", bucket.Registry{})
+	secret.Register("https:", bucket.Registry{})
 }

@@ -18,5 +18,5 @@ import (
 )
 
 func init() {
-	secret.Register(`^s3://`, bucket.Registry{})
+	secret.Register("s3:", bucket.Registry{})
 }

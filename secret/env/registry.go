@@ -10,16 +10,14 @@ import (
 type registry struct{}
 
 func init() {
-	// Register env backend with pattern that matches "env:" prefix
-	// Format: env:ENV_VAR_NAME
-	secret.Register(`^env:`, registry{})
+	secret.Register("env:", registry{})
 }
 
 func (registry) LoadManager(ctx context.Context, identifier string) (secret.Manager, error) {
 	return NewManager(), nil
 }
 
-func (registry) ParseSecret(identifier string) (managerID, secretName string, err error) {
+func (registry) ParseSecret(identifier string) (managerID, secretName, version string, err error) {
 	// Format: env:ENV_VAR_NAME
 	managerID, secretName, _ = strings.Cut(identifier, ":")
 	return

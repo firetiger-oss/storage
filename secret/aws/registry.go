@@ -10,17 +10,14 @@ import (
 	"github.com/firetiger-oss/storage/secret"
 )
 
-// arnPattern extracts components from an ARN or partial ARN.
-// Format: arn:PARTITION:SERVICE:REGION:ACCOUNT:RESOURCE
-// Groups: 1=partition, 2=service, 3=region, 4=account, 5=resource (optional)
-var arnPattern = regexp.MustCompile(`^arn:([^:]+):([^:]+):([^:]*):([^:]*):?(.*)$`)
+// arnPattern extracts the region from a Secrets Manager ARN.
+// Format: arn:PARTITION:secretsmanager:REGION:...
+var arnPattern = regexp.MustCompile(`^arn:[^:]+:secretsmanager:([^:]*)`)
 
 type registry struct{}
 
 func init() {
-	// Register AWS backend with pattern that matches Secrets Manager ARNs
-	// Format: arn:aws:secretsmanager:REGION:ACCOUNT:secret:NAME[-SUFFIX]
-	secret.Register(`^arn:aws:secretsmanager:`, &registry{})
+	secret.Register("arn:", &registry{})
 }
 
 func (r *registry) LoadManager(ctx context.Context, identifier string) (secret.Manager, error) {
@@ -28,7 +25,7 @@ func (r *registry) LoadManager(ctx context.Context, identifier string) (secret.M
 	if matches == nil {
 		return nil, fmt.Errorf("invalid ARN: cannot parse %q", identifier)
 	}
-	region := matches[3]
+	region := matches[1]
 
 	cfg, err := config.LoadDefaultConfig(ctx, config.WithRegion(region))
 	if err != nil {
@@ -38,16 +35,20 @@ func (r *registry) LoadManager(ctx context.Context, identifier string) (secret.M
 	return NewManagerFromConfig(cfg), nil
 }
 
-func (r *registry) ParseSecret(identifier string) (managerID, secretName string, err error) {
+func (r *registry) ParseSecret(identifier string) (managerID, secretName, version string, err error) {
+	if !arnPattern.MatchString(identifier) {
+		return "", "", "", fmt.Errorf("invalid AWS Secrets Manager ARN: %q", identifier)
+	}
 	arn, name, ok := strings.Cut(identifier, ":secret:")
 	if !ok {
-		return "", "", fmt.Errorf("invalid AWS Secrets Manager ARN: cannot parse %q", identifier)
+		return identifier, "", "", nil
 	}
 	if i := strings.LastIndexByte(name, ':'); i >= 0 {
-		name = name[:i] // trim stage qualifier
+		version = name[i+1:]
+		name = name[:i]
 	}
 	if i := strings.LastIndexByte(name, '-'); i >= 0 {
-		name = name[:i] // trim random suffix
+		name = name[:i]
 	}
-	return arn, name, nil
+	return arn, name, version, nil
 }

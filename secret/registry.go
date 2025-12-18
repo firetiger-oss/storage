@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 	"iter"
-	"regexp"
 	"slices"
+	"strings"
 	"sync"
 )
 
@@ -17,9 +17,10 @@ type Registry interface {
 	// The identifier can be a full secret path or just a manager identifier.
 	LoadManager(ctx context.Context, identifier string) (Manager, error)
 
-	// ParseSecret extracts the manager identifier and secret name from a full secret identifier.
+	// ParseSecret extracts the manager identifier, secret name, and version from a full secret identifier.
 	// Returns empty secretName if the identifier doesn't contain a secret name.
-	ParseSecret(identifier string) (managerID, secretName string, err error)
+	// Returns empty version if the identifier doesn't contain a version.
+	ParseSecret(identifier string) (managerID, secretName, version string, err error)
 }
 
 // RegistryFunc is a function type that implements the Registry interface.
@@ -32,13 +33,13 @@ func (reg RegistryFunc) LoadManager(ctx context.Context, identifier string) (Man
 
 // ParseSecret is a default implementation that returns an empty manager ID
 // and uses the identifier as the secret name.
-func (reg RegistryFunc) ParseSecret(identifier string) (string, string, error) {
-	return "", identifier, nil
+func (reg RegistryFunc) ParseSecret(identifier string) (string, string, string, error) {
+	return "", identifier, "", nil
 }
 
 type registryEntry struct {
-	pattern *regexp.Regexp
-	reg     Registry
+	prefix string
+	reg    Registry
 }
 
 var (
@@ -47,27 +48,26 @@ var (
 	globalRegistries []registryEntry
 )
 
-// Register registers a registry with a regex pattern for matching identifiers.
+// Register registers a registry with a prefix for matching identifiers.
 // This function is typically called in init() by backend packages.
 //
 // Example:
 //
 //	func init() {
 //		// Match AWS Secrets Manager ARNs
-//		secret.Register(`^arn:aws:secretsmanager:`, NewAWSRegistry())
+//		secret.Register("arn:", NewAWSRegistry())
 //
 //		// Match GCP Secret Manager resource names
-//		secret.Register(`^projects/[^/]+/secrets/`, NewGCPRegistry())
+//		secret.Register("projects/", NewGCPRegistry())
 //
 //		// Match env backend
-//		secret.Register(`^env$`, NewEnvRegistry())
+//		secret.Register("env:", NewEnvRegistry())
 //	}
-func Register(pattern string, reg Registry) {
-	compiled := regexp.MustCompile(pattern)
+func Register(prefix string, reg Registry) {
 	globalMutex.Lock()
 	globalRegistries = append(globalRegistries, registryEntry{
-		pattern: compiled,
-		reg:     reg,
+		prefix: prefix,
+		reg:    reg,
 	})
 	globalMutex.Unlock()
 }
@@ -101,11 +101,11 @@ func (r *defaultRegistry) LoadManager(ctx context.Context, identifier string) (M
 	adapters := globalAdapters
 	globalMutex.RUnlock()
 
-	// Find matching registry by pattern (iterate in reverse so last registered wins)
+	// Find matching registry by prefix (iterate in reverse so last registered wins)
 	for _, entry := range slices.Backward(registries) {
-		if entry.pattern.MatchString(identifier) {
+		if strings.HasPrefix(identifier, entry.prefix) {
 			// Parse to extract manager ID and optional secret name prefix
-			managerID, secretName, err := entry.reg.ParseSecret(identifier)
+			managerID, secretName, _, err := entry.reg.ParseSecret(identifier)
 			if err != nil {
 				return nil, err
 			}
@@ -134,23 +134,23 @@ func (r *defaultRegistry) LoadManager(ctx context.Context, identifier string) (M
 	return nil, fmt.Errorf("no registry found for identifier: %s", identifier)
 }
 
-func (r *defaultRegistry) ParseSecret(identifier string) (string, string, error) {
+func (r *defaultRegistry) ParseSecret(identifier string) (string, string, string, error) {
 	if identifier == "" {
-		return "", "", fmt.Errorf("identifier is required")
+		return "", "", "", fmt.Errorf("identifier is required")
 	}
 
 	globalMutex.RLock()
 	registries := globalRegistries
 	globalMutex.RUnlock()
 
-	// Find matching registry by pattern (iterate in reverse so last registered wins)
+	// Find matching registry by prefix (iterate in reverse so last registered wins)
 	for _, entry := range slices.Backward(registries) {
-		if entry.pattern.MatchString(identifier) {
+		if strings.HasPrefix(identifier, entry.prefix) {
 			return entry.reg.ParseSecret(identifier)
 		}
 	}
 
-	return "", "", fmt.Errorf("no registry found for identifier: %s", identifier)
+	return "", "", "", fmt.Errorf("no registry found for identifier: %s", identifier)
 }
 
 // LoadManager loads a secret manager from an identifier using the default registry.
@@ -190,7 +190,7 @@ func Load(ctx context.Context, secretID string) (Provider, string, error) {
 
 // LoadAt is like Load but uses the specified registry.
 func LoadAt(ctx context.Context, registry Registry, secretID string) (Provider, string, error) {
-	managerID, name, err := registry.ParseSecret(secretID)
+	managerID, name, _, err := registry.ParseSecret(secretID)
 	if err != nil {
 		return nil, "", err
 	}
@@ -221,7 +221,7 @@ func Create(ctx context.Context, secretID string, value Value, options ...Create
 
 // CreateAt is like Create but uses the specified registry.
 func CreateAt(ctx context.Context, registry Registry, secretID string, value Value, options ...CreateOption) (Info, error) {
-	managerID, name, err := registry.ParseSecret(secretID)
+	managerID, name, _, err := registry.ParseSecret(secretID)
 	if err != nil {
 		return Info{}, err
 	}
@@ -250,7 +250,7 @@ func Get(ctx context.Context, secretID string, options ...GetOption) (Value, str
 
 // GetAt is like Get but uses the specified registry.
 func GetAt(ctx context.Context, registry Registry, secretID string, options ...GetOption) (Value, string, error) {
-	managerID, name, err := registry.ParseSecret(secretID)
+	managerID, name, version, err := registry.ParseSecret(secretID)
 	if err != nil {
 		return nil, "", err
 	}
@@ -264,6 +264,9 @@ func GetAt(ctx context.Context, registry Registry, secretID string, options ...G
 		return nil, "", err
 	}
 
+	if version != "" {
+		options = append([]GetOption{WithVersion(version)}, options...)
+	}
 	return manager.GetSecretValue(ctx, name, options...)
 }
 
@@ -279,7 +282,7 @@ func GetInfo(ctx context.Context, secretID string) (Info, error) {
 
 // GetInfoAt is like GetInfo but uses the specified registry.
 func GetInfoAt(ctx context.Context, registry Registry, secretID string) (Info, error) {
-	managerID, name, err := registry.ParseSecret(secretID)
+	managerID, name, _, err := registry.ParseSecret(secretID)
 	if err != nil {
 		return Info{}, err
 	}
@@ -308,7 +311,7 @@ func Update(ctx context.Context, secretID string, value Value, options ...Update
 
 // UpdateAt is like Update but uses the specified registry.
 func UpdateAt(ctx context.Context, registry Registry, secretID string, value Value, options ...UpdateOption) (Info, error) {
-	managerID, name, err := registry.ParseSecret(secretID)
+	managerID, name, _, err := registry.ParseSecret(secretID)
 	if err != nil {
 		return Info{}, err
 	}
@@ -337,7 +340,7 @@ func Delete(ctx context.Context, secretID string) error {
 
 // DeleteAt is like Delete but uses the specified registry.
 func DeleteAt(ctx context.Context, registry Registry, secretID string) error {
-	managerID, name, err := registry.ParseSecret(secretID)
+	managerID, name, _, err := registry.ParseSecret(secretID)
 	if err != nil {
 		return err
 	}

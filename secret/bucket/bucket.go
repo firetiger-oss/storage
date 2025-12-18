@@ -33,7 +33,8 @@ func (Registry) LoadManager(ctx context.Context, identifier string) (secret.Mana
 // For example, "s3://my-bucket/my-secret" returns:
 //   - managerID: "s3://my-bucket"
 //   - secretName: "my-secret"
-func (Registry) ParseSecret(identifier string) (managerID, secretName string, err error) {
+//   - version: "" (bucket-backed secrets don't support versions in identifiers)
+func (Registry) ParseSecret(identifier string) (managerID, secretName, version string, err error) {
 	scheme, location, secretName := uri.Split(identifier)
 	managerID = uri.Join(scheme, location)
 	return
