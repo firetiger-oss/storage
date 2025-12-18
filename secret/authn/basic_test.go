@@ -535,6 +535,142 @@ func TestNewBasicAuthTransport(t *testing.T) {
 	})
 }
 
+func TestCachingTransport(t *testing.T) {
+	t.Run("caches credential across requests", func(t *testing.T) {
+		loadCount := 0
+		store := secret.ProviderFunc(func(ctx context.Context, name string, options ...secret.GetOption) (secret.Value, string, error) {
+			loadCount++
+			return secret.Value("alice:secret123"), "", nil
+		})
+
+		transport := roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: http.StatusOK}, nil
+		})
+
+		authTransport := NewBasicAuthTransport(NewLoader[stringCredential](store), "my-secret", "example.com", transport)
+
+		for i := 0; i < 3; i++ {
+			req := httptest.NewRequest("GET", "http://example.com/api", nil)
+			_, err := authTransport.RoundTrip(req)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		}
+
+		if loadCount != 1 {
+			t.Errorf("expected credential to be loaded once, got %d loads", loadCount)
+		}
+	})
+
+	t.Run("refreshes credential on 401", func(t *testing.T) {
+		loadCount := 0
+		store := secret.ProviderFunc(func(ctx context.Context, name string, options ...secret.GetOption) (secret.Value, string, error) {
+			loadCount++
+			if loadCount == 1 {
+				return secret.Value("alice:secret123"), "", nil
+			}
+			return secret.Value("bob:newpass"), "", nil
+		})
+
+		requestCount := 0
+		transport := roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+			requestCount++
+			if requestCount == 1 {
+				return &http.Response{
+					StatusCode: http.StatusUnauthorized,
+					Body:       http.NoBody,
+				}, nil
+			}
+			return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody}, nil
+		})
+
+		authTransport := NewBasicAuthTransport(NewLoader[stringCredential](store), "my-secret", "example.com", transport)
+
+		req := httptest.NewRequest("GET", "http://example.com/api", nil)
+		resp, err := authTransport.RoundTrip(req)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("expected 200 after retry, got %d", resp.StatusCode)
+		}
+
+		if loadCount != 2 {
+			t.Errorf("expected 2 loads (initial + refresh), got %d", loadCount)
+		}
+		if requestCount != 2 {
+			t.Errorf("expected 2 requests (initial + retry), got %d", requestCount)
+		}
+	})
+
+	t.Run("no retry when credential unchanged", func(t *testing.T) {
+		loadCount := 0
+		store := secret.ProviderFunc(func(ctx context.Context, name string, options ...secret.GetOption) (secret.Value, string, error) {
+			loadCount++
+			return secret.Value("alice:secret123"), "", nil
+		})
+
+		requestCount := 0
+		transport := roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+			requestCount++
+			return &http.Response{
+				StatusCode: http.StatusUnauthorized,
+				Body:       http.NoBody,
+			}, nil
+		})
+
+		authTransport := NewBasicAuthTransport(NewLoader[stringCredential](store), "my-secret", "example.com", transport)
+
+		req := httptest.NewRequest("GET", "http://example.com/api", nil)
+		resp, err := authTransport.RoundTrip(req)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Errorf("expected 401 (no retry when credential unchanged), got %d", resp.StatusCode)
+		}
+
+		if loadCount != 2 {
+			t.Errorf("expected 2 loads (initial + refresh attempt), got %d", loadCount)
+		}
+		if requestCount != 1 {
+			t.Errorf("expected 1 request (no retry), got %d", requestCount)
+		}
+	})
+
+	t.Run("retries only once", func(t *testing.T) {
+		loadCount := 0
+		store := secret.ProviderFunc(func(ctx context.Context, name string, options ...secret.GetOption) (secret.Value, string, error) {
+			loadCount++
+			return secret.Value("alice:secret" + string(rune('0'+loadCount))), "", nil
+		})
+
+		requestCount := 0
+		transport := roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+			requestCount++
+			return &http.Response{
+				StatusCode: http.StatusUnauthorized,
+				Body:       http.NoBody,
+			}, nil
+		})
+
+		authTransport := NewBasicAuthTransport(NewLoader[stringCredential](store), "my-secret", "example.com", transport)
+
+		req := httptest.NewRequest("GET", "http://example.com/api", nil)
+		resp, err := authTransport.RoundTrip(req)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Errorf("expected 401, got %d", resp.StatusCode)
+		}
+
+		if requestCount != 2 {
+			t.Errorf("expected exactly 2 requests (initial + one retry), got %d", requestCount)
+		}
+	})
+}
+
 func TestDomainContains(t *testing.T) {
 	tests := []struct {
 		name     string

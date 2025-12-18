@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/firetiger-oss/storage/secret"
 	"golang.org/x/net/publicsuffix"
@@ -76,18 +77,98 @@ func NewAuthForwarder[C any, S Scheme[C]](transport http.RoundTripper, scheme S)
 // NewAuthTransport returns an http.RoundTripper that loads credentials
 // and injects them into outbound requests using the given scheme.
 // If the request already has an Authorization header, it passes through unchanged.
-func NewAuthTransport[C any, S Scheme[C]](loader Loader[C], secretName, domain string, transport http.RoundTripper, scheme S) http.RoundTripper {
-	return roundTripperFunc(func(req *http.Request) (*http.Response, error) {
-		if !hasAuthorization(req) && domainContains(domain, hostname(req)) {
-			cred, err := loader.Load(req.Context(), secretName)
-			if err != nil {
-				return nil, err
-			}
-			req = req.Clone(req.Context())
-			scheme.Inject(req, cred)
+//
+// Credentials are cached and reused across requests. On 401 responses,
+// the transport reloads the credential and retries the request once if the
+// credential has changed.
+func NewAuthTransport[C comparable, S Scheme[C]](loader Loader[C], secretName, domain string, transport http.RoundTripper, scheme S) http.RoundTripper {
+	return &cachingTransport[C, S]{
+		loader:     loader,
+		secretName: secretName,
+		domain:     domain,
+		transport:  transport,
+		scheme:     scheme,
+	}
+}
+
+type cachingTransport[C comparable, S Scheme[C]] struct {
+	loader     Loader[C]
+	secretName string
+	domain     string
+	transport  http.RoundTripper
+	scheme     S
+
+	mu     sync.Mutex
+	cached C
+	loaded bool
+}
+
+func (t *cachingTransport[C, S]) RoundTrip(req *http.Request) (*http.Response, error) {
+	if hasAuthorization(req) || !domainContains(t.domain, hostname(req)) {
+		return t.transport.RoundTrip(req)
+	}
+
+	cred, err := t.credential(req.Context())
+	if err != nil {
+		return nil, err
+	}
+
+	req = req.Clone(req.Context())
+	t.scheme.Inject(req, cred)
+
+	resp, err := t.transport.RoundTrip(req)
+	if err != nil || resp.StatusCode != http.StatusUnauthorized {
+		return resp, err
+	}
+
+	newCred, err := t.refresh(req.Context())
+	if err != nil || newCred == cred {
+		return resp, nil
+	}
+
+	if req.GetBody != nil {
+		body, err := req.GetBody()
+		if err != nil {
+			return resp, nil
 		}
-		return transport.RoundTrip(req)
-	})
+		req.Body = body
+	}
+
+	resp.Body.Close()
+	t.scheme.Inject(req, newCred)
+	return t.transport.RoundTrip(req)
+}
+
+func (t *cachingTransport[C, S]) credential(ctx context.Context) (C, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if t.loaded {
+		return t.cached, nil
+	}
+
+	cred, err := t.loader.Load(ctx, t.secretName)
+	if err != nil {
+		return t.cached, err
+	}
+
+	t.cached = cred
+	t.loaded = true
+	return cred, nil
+}
+
+func (t *cachingTransport[C, S]) refresh(ctx context.Context) (C, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	cred, err := t.loader.Load(ctx, t.secretName)
+	if err != nil {
+		return t.cached, err
+	}
+
+	t.cached = cred
+	t.loaded = true
+	return cred, nil
 }
 
 type roundTripperFunc func(*http.Request) (*http.Response, error)
