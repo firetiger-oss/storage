@@ -355,14 +355,12 @@ func TestRegistryParseSecret(t *testing.T) {
 			identifier:     "arn:aws:secretsmanager:us-east-1:123456789012:secret:my-secret-AbCdEf:AWSCURRENT",
 			wantManagerID:  "arn:aws:secretsmanager:us-east-1:123456789012",
 			wantSecretName: "my-secret",
-			wantVersion:    "AWSCURRENT",
 		},
 		{
 			name:           "ARN with suffix and AWSPREVIOUS qualifier",
 			identifier:     "arn:aws:secretsmanager:us-east-1:123456789012:secret:my-secret-AbCdEf:AWSPREVIOUS",
 			wantManagerID:  "arn:aws:secretsmanager:us-east-1:123456789012",
 			wantSecretName: "my-secret",
-			wantVersion:    "AWSPREVIOUS",
 		},
 		{
 			name:          "manager ID without secret",

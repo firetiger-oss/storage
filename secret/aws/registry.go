@@ -44,11 +44,10 @@ func (r *registry) ParseSecret(identifier string) (managerID, secretName, versio
 		return identifier, "", "", nil
 	}
 	if i := strings.LastIndexByte(name, ':'); i >= 0 {
-		version = name[i+1:]
-		name = name[:i]
+		name = name[:i] // strip stage qualifier (AWSCURRENT, AWSPREVIOUS, etc.)
 	}
 	if i := strings.LastIndexByte(name, '-'); i >= 0 {
-		name = name[:i]
+		name = name[:i] // strip random suffix
 	}
-	return arn, name, version, nil
+	return arn, name, "", nil
 }
