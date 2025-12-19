@@ -2,6 +2,8 @@ package uri
 
 import (
 	"iter"
+	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -23,6 +25,64 @@ func Clean(path string) string {
 	})
 }
 
+// isLocalFilePath returns true if s looks like a local file path.
+func isLocalFilePath(s string) bool {
+	if s == "" {
+		return false
+	}
+	// Absolute Unix paths
+	if s[0] == '/' {
+		return true
+	}
+	// Relative paths: ./ or ../
+	if strings.HasPrefix(s, "./") || strings.HasPrefix(s, "../") || s == "." || s == ".." {
+		return true
+	}
+	// Home directory
+	if s[0] == '~' {
+		return true
+	}
+	return false
+}
+
+// expandFilePath expands a local file path to an absolute path.
+// It handles ~ for home directory and resolves relative paths.
+func expandFilePath(s string) string {
+	// Preserve trailing slash
+	hasTrailingSlash := strings.HasSuffix(s, "/")
+
+	// Convert from URI slash format to native path for os operations
+	nativePath := filepath.FromSlash(s)
+
+	// Expand ~ to home directory
+	if strings.HasPrefix(s, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			nativePath = filepath.Join(home, filepath.FromSlash(s[2:]))
+		}
+	} else if s == "~" {
+		if home, err := os.UserHomeDir(); err == nil {
+			nativePath = home
+		}
+	}
+
+	// Make relative paths absolute (resolve . and ..)
+	if !filepath.IsAbs(nativePath) {
+		if cwd, err := os.Getwd(); err == nil {
+			nativePath = filepath.Join(cwd, nativePath)
+		}
+	}
+
+	// Clean the path and convert back to URI slash format
+	result := filepath.ToSlash(filepath.Clean(nativePath))
+
+	// Restore trailing slash if originally present
+	if hasTrailingSlash && !strings.HasSuffix(result, "/") {
+		result += "/"
+	}
+
+	return result
+}
+
 // Split splits a URI into its components: scheme, location, and path.
 //
 // The path is always cleaned and exposed as relative to the location, even for
@@ -30,6 +90,9 @@ func Clean(path string) string {
 //
 // For file:// URIs, the location is always empty and the path contains the
 // full path after the scheme with the leading slash trimmed.
+//
+// Local file paths (starting with /, ./, ../, or ~) are automatically detected
+// and treated as file:// URIs with the path expanded to an absolute path.
 func Split(uri string) (scheme, location, path string) {
 	if len(uri) == 0 {
 		return
@@ -45,6 +108,9 @@ func Split(uri string) (scheme, location, path string) {
 		} else {
 			location, path, _ = strings.Cut(uri, "/")
 		}
+	} else if isLocalFilePath(uri) {
+		scheme = "file"
+		path = expandFilePath(uri)
 	} else {
 		path = uri
 	}
