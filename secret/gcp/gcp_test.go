@@ -83,7 +83,7 @@ func (m *mockClient) AddSecretVersion(ctx context.Context, req *secretmanagerpb.
 	defer m.mu.Unlock()
 
 	// Extract secret name from parent path
-	secretName := extractSecretName(req.Parent)
+	secretName := extractSecretNameFromPath(req.Parent)
 	sec, exists := m.secrets[secretName]
 	if !exists {
 		return nil, status.Error(codes.NotFound, "secret not found")
@@ -125,7 +125,7 @@ func (m *mockClient) AccessSecretVersion(ctx context.Context, req *secretmanager
 	defer m.mu.RUnlock()
 
 	// Parse the version path
-	secretName := extractSecretName(req.Name)
+	secretName := extractSecretNameFromPath(req.Name)
 	versionID := extractVersionID(req.Name)
 
 	sec, exists := m.secrets[secretName]
@@ -183,7 +183,7 @@ func (m *mockClient) GetSecret(ctx context.Context, req *secretmanagerpb.GetSecr
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	secretName := extractSecretName(req.Name)
+	secretName := extractSecretNameFromPath(req.Name)
 	sec, exists := m.secrets[secretName]
 	if !exists {
 		return nil, status.Error(codes.NotFound, "secret not found")
@@ -204,7 +204,7 @@ func (m *mockClient) UpdateSecret(ctx context.Context, req *secretmanagerpb.Upda
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	secretName := extractSecretName(req.Secret.Name)
+	secretName := extractSecretNameFromPath(req.Secret.Name)
 	sec, exists := m.secrets[secretName]
 	if !exists {
 		return nil, status.Error(codes.NotFound, "secret not found")
@@ -229,7 +229,7 @@ func (m *mockClient) DeleteSecret(ctx context.Context, req *secretmanagerpb.Dele
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	secretName := extractSecretName(req.Name)
+	secretName := extractSecretNameFromPath(req.Name)
 	delete(m.secrets, secretName)
 
 	return nil
@@ -299,7 +299,7 @@ func (m *mockClient) ListSecretVersions(ctx context.Context, req *secretmanagerp
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	secretName := extractSecretName(req.Parent)
+	secretName := extractSecretNameFromPath(req.Parent)
 	sec, exists := m.secrets[secretName]
 	if !exists {
 		return &mockSecretVersionIterator{versions: nil}
@@ -331,7 +331,7 @@ func (m *mockClient) DestroySecretVersion(ctx context.Context, req *secretmanage
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	secretName := extractSecretName(req.Name)
+	secretName := extractSecretNameFromPath(req.Name)
 	versionID := extractVersionID(req.Name)
 
 	sec, exists := m.secrets[secretName]
@@ -525,7 +525,56 @@ func TestExtractSecretName(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := extractSecretName(tt.resourceName); got != tt.want {
+			if got := extractSecretNameFromPath(tt.resourceName); got != tt.want {
+				t.Errorf("extractSecretNameFromPath() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestManagerExtractSecretName(t *testing.T) {
+	mgr := NewManagerFromClient(newMockClient("my-project"), "my-project")
+
+	tests := []struct {
+		name         string
+		resourceName string
+		want         string
+		wantErr      bool
+	}{
+		{
+			name:         "short name",
+			resourceName: "my-secret",
+			want:         "my-secret",
+			wantErr:      false,
+		},
+		{
+			name:         "full path matching project",
+			resourceName: "projects/my-project/secrets/my-secret",
+			want:         "my-secret",
+			wantErr:      false,
+		},
+		{
+			name:         "full path different project",
+			resourceName: "projects/other-project/secrets/my-secret",
+			want:         "",
+			wantErr:      true,
+		},
+		{
+			name:         "full path with numeric project ID mismatch",
+			resourceName: "projects/1094910605637/secrets/conn_abc123",
+			want:         "",
+			wantErr:      true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := mgr.extractSecretName(tt.resourceName)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("extractSecretName() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if got != tt.want {
 				t.Errorf("extractSecretName() = %v, want %v", got, tt.want)
 			}
 		})
