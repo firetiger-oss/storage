@@ -115,7 +115,7 @@ func TestFileSeekAndWriteTo(t *testing.T) {
 	}
 
 	buf.Reset()
-	n, err = f3.(io.WriterTo).WriteTo(&buf)
+	_, err = f3.(io.WriterTo).WriteTo(&buf)
 	if err != nil {
 		t.Fatal("WriteTo after Seek error:", err)
 	}
