@@ -235,15 +235,8 @@ func (f *file) Seek(offset int64, whence int) (int64, error) {
 		return 0, fmt.Errorf("invalid whence: %d", whence)
 	}
 
-	if newOffset != 0 {
-		if newOffset > 0 {
-			if _, err := f.Stat(); err != nil {
-				return 0, err
-			}
-		}
-		if newOffset < 0 || newOffset > f.size {
-			return 0, fmt.Errorf("offset out of range: %d/%d", newOffset, f.size)
-		}
+	if newOffset < 0 {
+		return 0, fmt.Errorf("negative position: %d", newOffset)
 	}
 
 	if newOffset != f.seek && f.body != nil {
