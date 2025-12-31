@@ -184,16 +184,14 @@ func (f *file) Close() error {
 
 func (f *file) Read(b []byte) (int, error) {
 	if f.body == nil {
-		if f.size < 0 {
+		var opts []GetOption
+		if f.seek > 0 {
 			if _, err := f.Stat(); err != nil {
 				return 0, err
 			}
-		}
-		if f.seek >= f.size {
-			return 0, io.EOF
-		}
-		var opts []GetOption
-		if f.seek > 0 {
+			if f.seek >= f.size {
+				return 0, io.EOF
+			}
 			opts = append(opts, BytesRange(f.seek, f.size-1))
 		}
 		body, object, err := f.bucket.GetObject(f.ctx, f.key, opts...)
@@ -201,6 +199,7 @@ func (f *file) Read(b []byte) (int, error) {
 			return 0, err
 		}
 		f.body = body
+		f.size = object.Size
 		f.time = object.LastModified
 	}
 	n, err := f.body.Read(b)
@@ -221,12 +220,6 @@ func (f *file) Stat() (fs.FileInfo, error) {
 }
 
 func (f *file) Seek(offset int64, whence int) (int64, error) {
-	if f.size < 0 {
-		if _, err := f.Stat(); err != nil {
-			return 0, err
-		}
-	}
-
 	var newOffset int64
 	switch whence {
 	case io.SeekStart:
@@ -234,13 +227,23 @@ func (f *file) Seek(offset int64, whence int) (int64, error) {
 	case io.SeekCurrent:
 		newOffset = f.seek + offset
 	case io.SeekEnd:
+		if _, err := f.Stat(); err != nil {
+			return 0, err
+		}
 		newOffset = f.size + offset
 	default:
 		return 0, fmt.Errorf("invalid whence: %d", whence)
 	}
 
-	if newOffset < 0 {
-		return 0, fmt.Errorf("negative position: %d", newOffset)
+	if newOffset != 0 {
+		if newOffset > 0 {
+			if _, err := f.Stat(); err != nil {
+				return 0, err
+			}
+		}
+		if newOffset < 0 || newOffset > f.size {
+			return 0, fmt.Errorf("offset out of range: %d/%d", newOffset, f.size)
+		}
 	}
 
 	if newOffset != f.seek && f.body != nil {
@@ -254,16 +257,14 @@ func (f *file) Seek(offset int64, whence int) (int64, error) {
 
 func (f *file) WriteTo(w io.Writer) (int64, error) {
 	if f.body == nil {
-		if f.size < 0 {
+		var opts []GetOption
+		if f.seek > 0 {
 			if _, err := f.Stat(); err != nil {
 				return 0, err
 			}
-		}
-		if f.seek >= f.size {
-			return 0, nil
-		}
-		var opts []GetOption
-		if f.seek > 0 {
+			if f.seek >= f.size {
+				return 0, nil
+			}
 			opts = append(opts, BytesRange(f.seek, f.size-1))
 		}
 		body, object, err := f.bucket.GetObject(f.ctx, f.key, opts...)
@@ -271,9 +272,9 @@ func (f *file) WriteTo(w io.Writer) (int64, error) {
 			return 0, err
 		}
 		f.body = body
+		f.size = object.Size
 		f.time = object.LastModified
 	}
-
 	n, err := io.Copy(w, f.body)
 	f.seek += n
 	return n, err
