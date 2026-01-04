@@ -2,7 +2,9 @@ package http_test
 
 import (
 	"bytes"
+	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -10,6 +12,7 @@ import (
 	"net/http/httputil"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -287,6 +290,152 @@ func TestHTTPStorageRateLimiting(t *testing.T) {
 			t.Errorf("expected error message to contain status code 429, got: %v", err)
 		}
 	})
+}
+
+// TestHTTPStorageRangeHeaderFormat verifies that the HTTP client correctly formats
+// Range headers for closed ranges (bytes=0-100).
+func TestHTTPStorageRangeHeaderFormat(t *testing.T) {
+	tests := []struct {
+		name          string
+		start         int64
+		end           int64
+		expectedRange string
+	}{
+		{
+			name:          "closed range from start",
+			start:         0,
+			end:           100,
+			expectedRange: "bytes=0-100",
+		},
+		{
+			name:          "closed range with offset",
+			start:         512,
+			end:           1023,
+			expectedRange: "bytes=512-1023",
+		},
+		{
+			name:          "single byte range",
+			start:         42,
+			end:           42,
+			expectedRange: "bytes=42-42",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var capturedRange string
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				capturedRange = r.Header.Get("Range")
+				w.WriteHeader(http.StatusPartialContent)
+				w.Write([]byte("test content"))
+			}))
+			t.Cleanup(server.Close)
+
+			bucket := storagehttp.NewBucket(server.URL)
+			_, _, err := bucket.GetObject(t.Context(), "test-key", storage.BytesRange(tc.start, tc.end))
+			if err != nil {
+				t.Fatalf("GetObject failed: %v", err)
+			}
+
+			if capturedRange != tc.expectedRange {
+				t.Errorf("expected Range header %q, got %q", tc.expectedRange, capturedRange)
+			}
+		})
+	}
+}
+
+// TestHTTPServerOpenEndedRangeFormat verifies that when the HTTP server receives
+// an open-ended Range request (bytes=N-) and forwards it via PresignGetObject,
+// the Range header is correctly formatted as "bytes=N-" instead of the invalid "bytes=N--1".
+//
+// This tests the server-side handling where parseBytesRange sets end=-1 for open-ended
+// ranges, and the bucket's Range formatting must handle this correctly.
+func TestHTTPServerOpenEndedRangeFormat(t *testing.T) {
+	tests := []struct {
+		name           string
+		requestRange   string
+		expectedFormat string
+	}{
+		{
+			name:           "open-ended from start",
+			requestRange:   "bytes=0-",
+			expectedFormat: "bytes=0-",
+		},
+		{
+			name:           "open-ended with offset",
+			requestRange:   "bytes=1024-",
+			expectedFormat: "bytes=1024-",
+		},
+		{
+			name:           "closed range",
+			requestRange:   "bytes=0-100",
+			expectedFormat: "bytes=0-100",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var capturedRange string
+
+			// Create a mock backend that captures presign requests
+			backend := &mockPresignBucket{
+				onPresignGetObject: func(rangeHeader string) {
+					capturedRange = rangeHeader
+				},
+			}
+
+			server := httptest.NewServer(storagehttp.BucketHandler(backend))
+			t.Cleanup(server.Close)
+
+			req, err := http.NewRequest("GET", server.URL+"/test-key", nil)
+			if err != nil {
+				t.Fatalf("failed to create request: %v", err)
+			}
+			req.Header.Set("Range", tc.requestRange)
+
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("request failed: %v", err)
+			}
+			resp.Body.Close()
+
+			if capturedRange != tc.expectedFormat {
+				t.Errorf("expected Range %q, got %q", tc.expectedFormat, capturedRange)
+			}
+		})
+	}
+}
+
+// mockPresignBucket is a bucket that returns ErrPresignRedirect from GetObject,
+// triggering the presign path in the server handler.
+type mockPresignBucket struct {
+	storage.Bucket
+	onPresignGetObject func(rangeHeader string)
+}
+
+func (m *mockPresignBucket) Location() string {
+	return "mock://bucket"
+}
+
+func (m *mockPresignBucket) GetObject(ctx context.Context, key string, options ...storage.GetOption) (io.ReadCloser, storage.ObjectInfo, error) {
+	return nil, storage.ObjectInfo{}, storage.ErrPresignRedirect
+}
+
+func (m *mockPresignBucket) PresignGetObject(ctx context.Context, key string, expiration time.Duration, options ...storage.GetOption) (string, error) {
+	opts := storage.NewGetOptions(options...)
+	if start, end, ok := opts.BytesRange(); ok {
+		var rangeHeader string
+		if end >= 0 {
+			rangeHeader = fmt.Sprintf("bytes=%d-%d", start, end)
+		} else {
+			rangeHeader = fmt.Sprintf("bytes=%d-", start)
+		}
+		if m.onPresignGetObject != nil {
+			m.onPresignGetObject(rangeHeader)
+		}
+	}
+	return "https://example.com/presigned", nil
 }
 
 // TestHTTPServerEscapedPaths verifies that the HTTP server correctly preserves

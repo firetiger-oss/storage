@@ -689,7 +689,11 @@ func newGetObjectInput(bucket, key string, options ...storage.GetOption) *s3.Get
 	}
 	getOptions := storage.NewGetOptions(options...)
 	if start, end, ok := getOptions.BytesRange(); ok {
-		input.Range = aws.String(fmt.Sprintf("bytes=%d-%d", start, end))
+		if end >= 0 {
+			input.Range = aws.String(fmt.Sprintf("bytes=%d-%d", start, end))
+		} else {
+			input.Range = aws.String(fmt.Sprintf("bytes=%d-", start))
+		}
 	}
 	return input
 }
