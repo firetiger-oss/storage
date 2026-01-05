@@ -21,6 +21,7 @@ import (
 	"github.com/firetiger-oss/storage"
 	"github.com/firetiger-oss/storage/backoff"
 	"github.com/firetiger-oss/storage/cache"
+	storagehttp "github.com/firetiger-oss/storage/http"
 	"github.com/firetiger-oss/storage/internal/sequtil"
 	"github.com/firetiger-oss/storage/uri"
 )
@@ -689,7 +690,7 @@ func newGetObjectInput(bucket, key string, options ...storage.GetOption) *s3.Get
 	}
 	getOptions := storage.NewGetOptions(options...)
 	if start, end, ok := getOptions.BytesRange(); ok {
-		input.Range = aws.String(fmt.Sprintf("bytes=%d-%d", start, end))
+		input.Range = aws.String(storagehttp.BytesRange(start, end))
 	}
 	return input
 }

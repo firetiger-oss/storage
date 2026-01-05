@@ -16,13 +16,17 @@ import (
 )
 
 type HandlerOptions struct {
-	location        string
-	maxKeys         int
-	presignRedirect bool
+	location          string
+	maxKeys           int
+	presignRedirect   bool
+	presignExpiration time.Duration
 }
 
 func NewHandlerOptions(options ...HandlerOption) *HandlerOptions {
-	opts := &HandlerOptions{maxKeys: listObjectsMaxKeys}
+	opts := &HandlerOptions{
+		maxKeys:           listObjectsMaxKeys,
+		presignExpiration: 15 * time.Minute,
+	}
 	for _, option := range options {
 		option(opts)
 	}
@@ -55,6 +59,12 @@ func WithMaxKeys(maxKeys int) HandlerOption {
 // to that URL instead of serving the content directly.
 func WithPresignRedirect(enabled bool) HandlerOption {
 	return func(options *HandlerOptions) { options.presignRedirect = enabled }
+}
+
+// WithPresignExpiration sets the expiration duration for presigned URLs generated
+// when handling ErrPresignRedirect responses from the bucket. The default is 15 minutes.
+func WithPresignExpiration(expiration time.Duration) HandlerOption {
+	return func(options *HandlerOptions) { options.presignExpiration = expiration }
 }
 
 func BucketHandler(b storage.Bucket, options ...HandlerOption) http.Handler {
@@ -131,12 +141,23 @@ func handleHEAD(w http.ResponseWriter, r *http.Request, b storage.Bucket, h *Han
 			return
 		}
 
-		if object, err := b.HeadObject(r.Context(), makeKey(r)); err != nil {
+		object, err := b.HeadObject(r.Context(), makeKey(r))
+		if err != nil {
+			if errors.Is(err, storage.ErrPresignRedirect) {
+				presignedURL, presignErr := b.PresignHeadObject(r.Context(), makeKey(r))
+				if presignErr != nil {
+					writeError(w, presignErr)
+					return
+				}
+				w.Header().Set("Location", presignedURL)
+				w.WriteHeader(http.StatusTemporaryRedirect)
+				return
+			}
 			writeError(w, err)
-		} else {
-			header := w.Header()
-			setObject(header, object)
+			return
 		}
+		header := w.Header()
+		setObject(header, object)
 	}
 }
 
@@ -294,6 +315,16 @@ func handleGET(w http.ResponseWriter, r *http.Request, b storage.Bucket, h *Hand
 
 		reader, object, err := b.GetObject(r.Context(), makeKey(r), options...)
 		if err != nil {
+			if errors.Is(err, storage.ErrPresignRedirect) {
+				presignedURL, presignErr := b.PresignGetObject(r.Context(), makeKey(r), h.presignExpiration, options...)
+				if presignErr != nil {
+					writeError(w, presignErr)
+					return
+				}
+				w.Header().Set("Location", presignedURL)
+				w.WriteHeader(http.StatusTemporaryRedirect)
+				return
+			}
 			writeError(w, err)
 			return
 		}
@@ -353,6 +384,16 @@ func handlePUT(w http.ResponseWriter, r *http.Request, b storage.Bucket, h *Hand
 
 	object, err := b.PutObject(r.Context(), makeKey(r), r.Body, options...)
 	if err != nil {
+		if errors.Is(err, storage.ErrPresignRedirect) {
+			presignedURL, presignErr := b.PresignPutObject(r.Context(), makeKey(r), h.presignExpiration, options...)
+			if presignErr != nil {
+				writeError(w, presignErr)
+				return
+			}
+			w.Header().Set("Location", presignedURL)
+			w.WriteHeader(http.StatusTemporaryRedirect)
+			return
+		}
 		writeError(w, err)
 		return
 	}
@@ -416,6 +457,16 @@ func handleDELETE(w http.ResponseWriter, r *http.Request, b storage.Bucket, h *H
 		}
 
 		if err := b.DeleteObject(r.Context(), makeKey(r)); err != nil {
+			if errors.Is(err, storage.ErrPresignRedirect) {
+				presignedURL, presignErr := b.PresignDeleteObject(r.Context(), makeKey(r))
+				if presignErr != nil {
+					writeError(w, presignErr)
+					return
+				}
+				w.Header().Set("Location", presignedURL)
+				w.WriteHeader(http.StatusTemporaryRedirect)
+				return
+			}
 			writeError(w, err)
 		}
 	} else {

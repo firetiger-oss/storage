@@ -216,7 +216,7 @@ func (b *Bucket) GetObject(ctx context.Context, key string, options ...storage.G
 		if err := storage.ValidObjectRange(key, start, end); err != nil {
 			return nil, storage.ObjectInfo{}, err
 		}
-		req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", start, end))
+		req.Header.Set("Range", BytesRange(start, end))
 	}
 
 	res, err := b.client.Do(req)
