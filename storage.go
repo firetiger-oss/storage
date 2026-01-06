@@ -419,6 +419,16 @@ func CopyObjectAt(ctx context.Context, registry Registry, sourceURI, destURI str
 	srcBucketURI := uri.Join(srcScheme, srcBucket)
 	dstBucketURI := uri.Join(dstScheme, dstBucket)
 
+	// Same bucket URI: only load once
+	if srcBucketURI == dstBucketURI {
+		bucket, err := registry.LoadBucket(ctx, srcBucketURI)
+		if err != nil {
+			return err
+		}
+		return bucket.CopyObject(ctx, srcKey, dstKey, options...)
+	}
+
+	// Different bucket URIs: load both
 	srcBucketObj, err := registry.LoadBucket(ctx, srcBucketURI)
 	if err != nil {
 		return err
@@ -429,7 +439,7 @@ func CopyObjectAt(ctx context.Context, registry Registry, sourceURI, destURI str
 		return err
 	}
 
-	// Same bucket: use native copy
+	// Check if they resolve to the same underlying bucket
 	if srcBucketObj.Location() == dstBucketObj.Location() {
 		return srcBucketObj.CopyObject(ctx, srcKey, dstKey, options...)
 	}
