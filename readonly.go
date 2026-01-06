@@ -56,6 +56,10 @@ func (b *readOnlyBucket) DeleteObjects(ctx context.Context, objects iter.Seq2[st
 	}
 }
 
+func (b *readOnlyBucket) CopyObject(ctx context.Context, from, to string, options ...PutOption) error {
+	return ErrBucketReadOnly
+}
+
 func (b *readOnlyBucket) ListObjects(ctx context.Context, options ...ListOption) iter.Seq2[Object, error] {
 	return b.bucket.ListObjects(ctx, options...)
 }

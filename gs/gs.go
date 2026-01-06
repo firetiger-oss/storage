@@ -240,6 +240,63 @@ func (b *Bucket) DeleteObjects(ctx context.Context, objects iter.Seq2[string, er
 	}
 }
 
+func (b *Bucket) CopyObject(ctx context.Context, from, to string, options ...storage.PutOption) error {
+	if err := storage.ValidObjectKey(from); err != nil {
+		return err
+	}
+	if err := storage.ValidObjectKey(to); err != nil {
+		return err
+	}
+
+	putOptions := storage.NewPutOptions(options...)
+
+	src := b.client.Bucket(b.bucket).Object(from)
+	dst := b.client.Bucket(b.bucket).Object(to)
+
+	// Get source attributes for metadata merging
+	srcAttrs, err := src.Attrs(ctx)
+	if err != nil {
+		return makeIcebergError(err)
+	}
+
+	copier := dst.CopierFrom(src)
+
+	// Merge metadata: source metadata with overrides from options
+	copier.ObjectAttrs = gcloud.ObjectAttrs{
+		CacheControl:    srcAttrs.CacheControl,
+		ContentType:     srcAttrs.ContentType,
+		ContentEncoding: srcAttrs.ContentEncoding,
+		Metadata:        srcAttrs.Metadata,
+	}
+
+	// Apply overrides
+	if cc := putOptions.CacheControl(); cc != "" {
+		copier.CacheControl = cc
+	}
+
+	if ct := putOptions.ContentType(); ct != "application/octet-stream" {
+		copier.ContentType = ct
+	}
+
+	if ce := putOptions.ContentEncoding(); ce != "" {
+		copier.ContentEncoding = ce
+	}
+
+	// Merge metadata maps (overrides win)
+	if copier.Metadata == nil {
+		copier.Metadata = make(map[string]string)
+	}
+	for k, v := range putOptions.Metadata() {
+		copier.Metadata[k] = v
+	}
+
+	_, err = copier.Run(ctx)
+	if err != nil {
+		return makeIcebergError(err)
+	}
+	return nil
+}
+
 type listedObject struct {
 	key          string
 	generation   int64

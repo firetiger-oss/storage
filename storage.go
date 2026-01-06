@@ -111,6 +111,11 @@ type Bucket interface {
 	// drive the deletion process.
 	DeleteObjects(ctx context.Context, objects iter.Seq2[string, error]) iter.Seq2[string, error]
 
+	// CopyObject copies an object from one key to another within the same bucket.
+	// Source object metadata is preserved by default; any PutOptions provided will
+	// override specific fields (merge semantics).
+	CopyObject(ctx context.Context, from, to string, options ...PutOption) error
+
 	// ListObjects gathers a list of abbreviated metadata for all
 	// objects in a bucket, or under a key prefix (set through a
 	// ListOption).
@@ -401,6 +406,92 @@ func DeleteObjectAt(ctx context.Context, registry Registry, objectURI string) er
 		return err
 	}
 	return bucket.DeleteObject(ctx, objectKey)
+}
+
+func CopyObject(ctx context.Context, sourceURI, destURI string, options ...PutOption) error {
+	return CopyObjectAt(ctx, DefaultRegistry(), sourceURI, destURI, options...)
+}
+
+func CopyObjectAt(ctx context.Context, registry Registry, sourceURI, destURI string, options ...PutOption) error {
+	srcScheme, srcBucket, srcKey := uri.Split(sourceURI)
+	dstScheme, dstBucket, dstKey := uri.Split(destURI)
+
+	srcBucketURI := uri.Join(srcScheme, srcBucket)
+	dstBucketURI := uri.Join(dstScheme, dstBucket)
+
+	srcBucketObj, err := registry.LoadBucket(ctx, srcBucketURI)
+	if err != nil {
+		return err
+	}
+
+	dstBucketObj, err := registry.LoadBucket(ctx, dstBucketURI)
+	if err != nil {
+		return err
+	}
+
+	// Same bucket: use native copy
+	if srcBucketObj.Location() == dstBucketObj.Location() {
+		return srcBucketObj.CopyObject(ctx, srcKey, dstKey, options...)
+	}
+
+	// Cross-bucket: streaming fallback
+	return copyObjectStreaming(ctx, srcBucketObj, srcKey, dstBucketObj, dstKey, options...)
+}
+
+// copyObjectStreaming performs a cross-bucket copy via GetObject -> PutObject.
+func copyObjectStreaming(ctx context.Context, srcBucket Bucket, srcKey string, dstBucket Bucket, dstKey string, options ...PutOption) error {
+	reader, srcInfo, err := srcBucket.GetObject(ctx, srcKey)
+	if err != nil {
+		return err
+	}
+	defer reader.Close()
+
+	// Merge source metadata with provided options (options override)
+	mergedOpts := mergePutOptions(srcInfo, options...)
+	_, err = dstBucket.PutObject(ctx, dstKey, reader, mergedOpts...)
+	return err
+}
+
+// mergePutOptions creates PutOptions that preserve source metadata with overrides.
+func mergePutOptions(srcInfo ObjectInfo, overrides ...PutOption) []PutOption {
+	override := NewPutOptions(overrides...)
+
+	var opts []PutOption
+
+	// CacheControl
+	if cc := override.CacheControl(); cc != "" {
+		opts = append(opts, CacheControl(cc))
+	} else if srcInfo.CacheControl != "" {
+		opts = append(opts, CacheControl(srcInfo.CacheControl))
+	}
+
+	// ContentType
+	if ct := override.ContentType(); ct != "application/octet-stream" {
+		opts = append(opts, ContentType(ct))
+	} else if srcInfo.ContentType != "" {
+		opts = append(opts, ContentType(srcInfo.ContentType))
+	}
+
+	// ContentEncoding
+	if ce := override.ContentEncoding(); ce != "" {
+		opts = append(opts, ContentEncoding(ce))
+	} else if srcInfo.ContentEncoding != "" {
+		opts = append(opts, ContentEncoding(srcInfo.ContentEncoding))
+	}
+
+	// Metadata - merge maps (override wins)
+	metadata := make(map[string]string)
+	for k, v := range srcInfo.Metadata {
+		metadata[k] = v
+	}
+	for k, v := range override.Metadata() {
+		metadata[k] = v
+	}
+	for k, v := range metadata {
+		opts = append(opts, Metadata(k, v))
+	}
+
+	return opts
 }
 
 func DeleteObjects(ctx context.Context, objects iter.Seq2[string, error]) iter.Seq2[string, error] {

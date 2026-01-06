@@ -71,6 +71,10 @@ func (b *prefixedBucket) DeleteObjects(ctx context.Context, objects iter.Seq2[st
 	}
 }
 
+func (b *prefixedBucket) CopyObject(ctx context.Context, from, to string, options ...PutOption) error {
+	return b.bucket.CopyObject(ctx, b.prefix+from, b.prefix+to, options...)
+}
+
 func (b *prefixedBucket) ListObjects(ctx context.Context, options ...ListOption) iter.Seq2[Object, error] {
 	return func(yield func(Object, error) bool) {
 		prefixOptions := b.listOptions(options...)

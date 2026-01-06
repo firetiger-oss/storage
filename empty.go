@@ -48,6 +48,10 @@ func (emptyBucket) DeleteObjects(ctx context.Context, objects iter.Seq2[string, 
 	}
 }
 
+func (emptyBucket) CopyObject(ctx context.Context, from, to string, options ...PutOption) error {
+	return cmp.Or(context.Cause(ctx), ValidObjectKey(from), ErrObjectNotFound)
+}
+
 func (emptyBucket) ListObjects(ctx context.Context, options ...ListOption) iter.Seq2[Object, error] {
 	return func(yield func(Object, error) bool) {
 		if err := context.Cause(ctx); err != nil {

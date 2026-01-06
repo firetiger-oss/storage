@@ -324,6 +324,13 @@ func (c *cachedBucket) DeleteObjects(ctx context.Context, objects iter.Seq2[stri
 	})
 }
 
+func (c *cachedBucket) CopyObject(ctx context.Context, from, to string, options ...PutOption) error {
+	// Invalidate destination cache entry
+	c.objects.Drop(to)
+	c.infos.Drop(to)
+	return c.bucket.CopyObject(ctx, from, to, options...)
+}
+
 func (c *cachedBucket) ListObjects(ctx context.Context, options ...ListOption) iter.Seq2[Object, error] {
 	return c.bucket.ListObjects(ctx, options...)
 }

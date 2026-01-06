@@ -354,6 +354,12 @@ type S3Error struct {
 	RequestID string   `xml:"RequestId,omitempty"`
 }
 
+type CopyObjectResult struct {
+	XMLName      xml.Name `xml:"CopyObjectResult"`
+	ETag         string   `xml:"ETag"`
+	LastModified string   `xml:"LastModified"`
+}
+
 func parseDeleteObjectsRequest(r io.Reader) ([]string, bool, error) {
 	var request DeleteObjectsRequest
 	if err := xml.NewDecoder(r).Decode(&request); err != nil {

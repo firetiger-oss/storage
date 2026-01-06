@@ -431,6 +431,43 @@ func (b *Bucket) DeleteObjects(ctx context.Context, objects iter.Seq2[string, er
 	}
 }
 
+func (b *Bucket) CopyObject(ctx context.Context, from, to string, options ...storage.PutOption) error {
+	if err := storage.ValidObjectKey(from); err != nil {
+		return err
+	}
+	if err := storage.ValidObjectKey(to); err != nil {
+		return err
+	}
+
+	req, err := b.newRequest(ctx, http.MethodPut, to, nil)
+	if err != nil {
+		return makeIcebergError(req, nil, err)
+	}
+	defer req.Body.Close()
+
+	// Extract bucket name from host URL for x-amz-copy-source header
+	_, bucketName, _ := uri.Split(b.host)
+	req.Header.Set("X-Amz-Copy-Source", "/"+bucketName+"/"+from)
+
+	putOptions := storage.NewPutOptions(options...)
+	setHeaderIfNotEmpty(req.Header, "Cache-Control", putOptions.CacheControl())
+	setHeaderIfNotEmpty(req.Header, "Content-Type", putOptions.ContentType())
+	setHeaderIfNotEmpty(req.Header, "Content-Encoding", putOptions.ContentEncoding())
+	setObjectMetadata(req.Header, putOptions.Metadata())
+
+	res, err := b.client.Do(req)
+	if err != nil {
+		return makeIcebergError(req, nil, err)
+	}
+	defer res.Body.Close()
+
+	if res.StatusCode != http.StatusOK {
+		return makeIcebergError(req, res, nil)
+	}
+
+	return nil
+}
+
 func (b *Bucket) ListObjects(ctx context.Context, options ...storage.ListOption) iter.Seq2[storage.Object, error] {
 	return func(yield func(storage.Object, error) bool) {
 		listOptions := storage.NewListOptions(options...)

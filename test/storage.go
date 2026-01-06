@@ -277,6 +277,59 @@ func TestStorage(t *testing.T, loadBucket func(*testing.T) (storage.Bucket, erro
 			scenario: "Presign method returns a URL or ErrPresignedNotSupported",
 			function: testStoragePresign,
 		},
+
+		{
+			scenario: "CopyObject copies an object within the same bucket",
+			function: testStorageCopyObject,
+		},
+
+		{
+			scenario: "CopyObject returns ErrObjectNotFound when source does not exist",
+			function: testStorageCopyObjectNotFound,
+		},
+
+		{
+			scenario: "CopyObject with an invalid source path returns an error",
+			function: testStorageCopyObjectInvalidSourcePath,
+		},
+
+		{
+			scenario: "CopyObject with an invalid destination path returns an error",
+			function: testStorageCopyObjectInvalidDestPath,
+		},
+
+		{
+			scenario: "CopyObject preserves source metadata by default",
+			function: testStorageCopyObjectPreservesMetadata,
+			skipIf: func(bucket storage.Bucket) (bool, string) {
+				if _, ok := bucket.(*gs.Bucket); ok {
+					return true, "GCS mock client does not support Cache-Control properly"
+				}
+				return false, ""
+			},
+		},
+
+		{
+			scenario: "CopyObject with PutOptions overrides specific metadata",
+			function: testStorageCopyObjectOverridesMetadata,
+			skipIf: func(bucket storage.Bucket) (bool, string) {
+				if _, ok := bucket.(*gs.Bucket); ok {
+					return true, "GCS mock client does not support Cache-Control properly"
+				}
+				return false, ""
+			},
+		},
+
+		{
+			scenario: "CopyObject with canceled context returns context canceled",
+			function: testStorageCopyObjectContextCanceled,
+			skipIf: func(bucket storage.Bucket) (bool, string) {
+				if _, ok := bucket.(*gs.Bucket); ok {
+					return true, "GCS mock client does not support context cancellation"
+				}
+				return false, ""
+			},
+		},
 	}
 
 	for _, adapter := range adapters {
@@ -1665,4 +1718,192 @@ func testStoragePresign(t *testing.T, bucket storage.Bucket) {
 			t.Errorf("PresignPutObject with options failed with unexpected error: %v", err)
 		}
 	})
+}
+
+func testStorageCopyObject(t *testing.T, bucket storage.Bucket) {
+	ctx := t.Context()
+	const srcKey = "copy-source.txt"
+	const dstKey = "copy-dest.txt"
+	const data = "hello, world!"
+
+	// Create source object
+	if _, err := bucket.PutObject(ctx, srcKey, strings.NewReader(data)); err != nil {
+		t.Fatal("unexpected error writing source object:", err)
+	}
+
+	// Copy the object
+	if err := bucket.CopyObject(ctx, srcKey, dstKey); err != nil {
+		t.Fatal("unexpected error copying object:", err)
+	}
+
+	// Verify destination object exists with correct content
+	r, info, err := bucket.GetObject(ctx, dstKey)
+	if err != nil {
+		t.Fatal("unexpected error reading destination object:", err)
+	}
+	defer r.Close()
+
+	b, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal("unexpected error reading destination object:", err)
+	}
+	if string(b) != data {
+		t.Fatalf("unexpected object data: %q != %q", b, data)
+	}
+	if info.Size != int64(len(data)) {
+		t.Fatalf("unexpected object size: %d != %d", info.Size, len(data))
+	}
+
+	// Verify source object still exists
+	r, _, err = bucket.GetObject(ctx, srcKey)
+	if err != nil {
+		t.Fatal("source object should still exist after copy:", err)
+	}
+	r.Close()
+}
+
+func testStorageCopyObjectNotFound(t *testing.T, bucket storage.Bucket) {
+	ctx := t.Context()
+
+	err := bucket.CopyObject(ctx, "does-not-exist", "destination")
+	if !errors.Is(err, storage.ErrObjectNotFound) {
+		t.Fatalf("expected ErrObjectNotFound, got: %v", err)
+	}
+}
+
+func testStorageCopyObjectInvalidSourcePath(t *testing.T, bucket storage.Bucket) {
+	ctx := t.Context()
+
+	for _, path := range InvalidPaths {
+		if err := bucket.CopyObject(ctx, path, "valid-dest"); !errors.Is(err, storage.ErrInvalidObjectKey) {
+			t.Errorf("expected invalid path error for source %q: %v", path, err)
+		}
+	}
+}
+
+func testStorageCopyObjectInvalidDestPath(t *testing.T, bucket storage.Bucket) {
+	ctx := t.Context()
+
+	// First create a valid source object
+	const srcKey = "valid-source.txt"
+	if _, err := bucket.PutObject(ctx, srcKey, strings.NewReader("content")); err != nil {
+		t.Fatal("unexpected error writing source object:", err)
+	}
+
+	for _, path := range InvalidPaths {
+		if err := bucket.CopyObject(ctx, srcKey, path); !errors.Is(err, storage.ErrInvalidObjectKey) {
+			t.Errorf("expected invalid path error for dest %q: %v", path, err)
+		}
+	}
+}
+
+func testStorageCopyObjectPreservesMetadata(t *testing.T, bucket storage.Bucket) {
+	ctx := t.Context()
+	const srcKey = "copy-metadata-source.txt"
+	const dstKey = "copy-metadata-dest.txt"
+	const data = "hello, world!"
+	const contentType = "text/plain"
+	const cacheControl = "max-age=3600"
+	metadata := map[string]string{
+		"key1": "value1",
+		"key2": "value2",
+	}
+
+	// Create source object with metadata
+	if _, err := bucket.PutObject(ctx, srcKey, strings.NewReader(data),
+		storage.ContentType(contentType),
+		storage.CacheControl(cacheControl),
+		storage.Metadata("key1", "value1"),
+		storage.Metadata("key2", "value2"),
+	); err != nil {
+		t.Fatal("unexpected error writing source object:", err)
+	}
+
+	// Copy without any options - should preserve metadata
+	if err := bucket.CopyObject(ctx, srcKey, dstKey); err != nil {
+		t.Fatal("unexpected error copying object:", err)
+	}
+
+	// Verify destination has same metadata
+	info, err := bucket.HeadObject(ctx, dstKey)
+	if err != nil {
+		t.Fatal("unexpected error reading destination object:", err)
+	}
+
+	if info.ContentType != contentType {
+		t.Errorf("content type not preserved: %q != %q", info.ContentType, contentType)
+	}
+	if info.CacheControl != cacheControl {
+		t.Errorf("cache control not preserved: %q != %q", info.CacheControl, cacheControl)
+	}
+	if !maps.Equal(info.Metadata, metadata) {
+		t.Errorf("metadata not preserved: %v != %v", info.Metadata, metadata)
+	}
+}
+
+func testStorageCopyObjectOverridesMetadata(t *testing.T, bucket storage.Bucket) {
+	ctx := t.Context()
+	const srcKey = "copy-override-source.txt"
+	const dstKey = "copy-override-dest.txt"
+	const data = "hello, world!"
+	const srcContentType = "text/plain"
+	const dstContentType = "application/json"
+	const cacheControl = "max-age=3600"
+
+	// Create source object with metadata
+	if _, err := bucket.PutObject(ctx, srcKey, strings.NewReader(data),
+		storage.ContentType(srcContentType),
+		storage.CacheControl(cacheControl),
+		storage.Metadata("key1", "value1"),
+	); err != nil {
+		t.Fatal("unexpected error writing source object:", err)
+	}
+
+	// Copy with override options
+	if err := bucket.CopyObject(ctx, srcKey, dstKey,
+		storage.ContentType(dstContentType),
+		storage.Metadata("key2", "value2"),
+	); err != nil {
+		t.Fatal("unexpected error copying object:", err)
+	}
+
+	// Verify destination has overridden metadata
+	info, err := bucket.HeadObject(ctx, dstKey)
+	if err != nil {
+		t.Fatal("unexpected error reading destination object:", err)
+	}
+
+	// Content-Type should be overridden
+	if info.ContentType != dstContentType {
+		t.Errorf("content type not overridden: %q != %q", info.ContentType, dstContentType)
+	}
+
+	// Cache-Control should be preserved from source
+	if info.CacheControl != cacheControl {
+		t.Errorf("cache control should be preserved: %q != %q", info.CacheControl, cacheControl)
+	}
+
+	// Metadata should be merged (key1 from source, key2 from options)
+	if info.Metadata["key1"] != "value1" {
+		t.Errorf("source metadata key1 should be preserved: %v", info.Metadata)
+	}
+	if info.Metadata["key2"] != "value2" {
+		t.Errorf("override metadata key2 should be present: %v", info.Metadata)
+	}
+}
+
+func testStorageCopyObjectContextCanceled(t *testing.T, bucket storage.Bucket) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	// Create a source object first (with non-canceled context)
+	const srcKey = "copy-cancel-source.txt"
+	if _, err := bucket.PutObject(t.Context(), srcKey, strings.NewReader("content")); err != nil {
+		t.Fatal("unexpected error writing source object:", err)
+	}
+
+	// CopyObject with canceled context should fail
+	if err := bucket.CopyObject(ctx, srcKey, "copy-cancel-dest.txt"); !errors.Is(err, context.Canceled) {
+		t.Errorf("expected context canceled error, got %v", err)
+	}
 }

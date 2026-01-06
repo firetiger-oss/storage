@@ -837,3 +837,226 @@ func TestWithAdaptersMultiple(t *testing.T) {
 		t.Errorf("expected adapters to be called in order [1, 2, 3], got %v", order)
 	}
 }
+
+func TestCopyObject(t *testing.T) {
+	bucket := memory.NewBucket(
+		&memory.Entry{Key: "source.txt", Value: []byte("hello, world!")},
+	)
+	storage.Register("TestCopyObject", storage.SingleBucketRegistry(bucket))
+
+	ctx := t.Context()
+
+	t.Run("same bucket copy", func(t *testing.T) {
+		err := storage.CopyObject(ctx, "TestCopyObject://:memory:/source.txt", "TestCopyObject://:memory:/dest.txt")
+		if err != nil {
+			t.Fatal("unexpected error copying object:", err)
+		}
+
+		// Verify destination exists
+		r, info, err := storage.GetObject(ctx, "TestCopyObject://:memory:/dest.txt")
+		if err != nil {
+			t.Fatal("unexpected error reading destination object:", err)
+		}
+		defer r.Close()
+
+		b, err := io.ReadAll(r)
+		if err != nil {
+			t.Fatal("unexpected error reading destination object:", err)
+		}
+		if string(b) != "hello, world!" {
+			t.Fatalf("unexpected object data: %q", b)
+		}
+		if info.Size != 13 {
+			t.Fatalf("unexpected object size: %d", info.Size)
+		}
+
+		// Verify source still exists
+		r, _, err = storage.GetObject(ctx, "TestCopyObject://:memory:/source.txt")
+		if err != nil {
+			t.Fatal("source object should still exist:", err)
+		}
+		r.Close()
+	})
+
+	t.Run("source not found", func(t *testing.T) {
+		err := storage.CopyObject(ctx, "TestCopyObject://:memory:/does-not-exist", "TestCopyObject://:memory:/dest2.txt")
+		if !errors.Is(err, storage.ErrObjectNotFound) {
+			t.Fatalf("expected ErrObjectNotFound, got: %v", err)
+		}
+	})
+
+	t.Run("invalid source URI", func(t *testing.T) {
+		err := storage.CopyObject(ctx, "invalid-uri", "TestCopyObject://:memory:/dest.txt")
+		if err == nil {
+			t.Fatal("expected error for invalid source URI")
+		}
+	})
+
+	t.Run("invalid dest URI", func(t *testing.T) {
+		err := storage.CopyObject(ctx, "TestCopyObject://:memory:/source.txt", "invalid-uri")
+		if err == nil {
+			t.Fatal("expected error for invalid dest URI")
+		}
+	})
+
+	t.Run("bucket not found", func(t *testing.T) {
+		err := storage.CopyObject(ctx, "NonExistent://:memory:/source.txt", "NonExistent://:memory:/dest.txt")
+		if !errors.Is(err, storage.ErrBucketNotFound) {
+			t.Fatalf("expected ErrBucketNotFound, got: %v", err)
+		}
+	})
+}
+
+func TestCopyObjectCrossBucket(t *testing.T) {
+	srcBucket := memory.NewBucket(
+		&memory.Entry{Key: "cross-src.txt", Value: []byte("cross-bucket content")},
+	)
+	dstBucket := memory.NewBucket()
+
+	storage.Register("TestCopyObjectCrossSrc", storage.SingleBucketRegistry(srcBucket))
+	storage.Register("TestCopyObjectCrossDst", storage.SingleBucketRegistry(dstBucket))
+
+	ctx := t.Context()
+
+	// Copy between different buckets - should use streaming fallback
+	err := storage.CopyObject(ctx,
+		"TestCopyObjectCrossSrc://:memory:/cross-src.txt",
+		"TestCopyObjectCrossDst://:memory:/cross-dest.txt",
+	)
+	if err != nil {
+		t.Fatal("unexpected error copying object across buckets:", err)
+	}
+
+	// Verify destination exists in destination bucket
+	r, info, err := storage.GetObject(ctx, "TestCopyObjectCrossDst://:memory:/cross-dest.txt")
+	if err != nil {
+		t.Fatal("unexpected error reading destination object:", err)
+	}
+	defer r.Close()
+
+	b, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal("unexpected error reading destination object:", err)
+	}
+	if string(b) != "cross-bucket content" {
+		t.Fatalf("unexpected object data: %q", b)
+	}
+	if info.Size != int64(len("cross-bucket content")) {
+		t.Fatalf("unexpected object size: %d", info.Size)
+	}
+
+	// Verify source still exists in source bucket
+	r, _, err = storage.GetObject(ctx, "TestCopyObjectCrossSrc://:memory:/cross-src.txt")
+	if err != nil {
+		t.Fatal("source object should still exist:", err)
+	}
+	r.Close()
+}
+
+func TestCopyObjectWithOptions(t *testing.T) {
+	bucket := memory.NewBucket()
+	storage.Register("TestCopyObjectWithOptions", storage.SingleBucketRegistry(bucket))
+
+	ctx := t.Context()
+
+	// Create source object with metadata using PutObject
+	_, err := bucket.PutObject(ctx, "source.txt", strings.NewReader("content"),
+		storage.ContentType("text/plain"),
+		storage.CacheControl("max-age=3600"),
+		storage.Metadata("key1", "value1"),
+	)
+	if err != nil {
+		t.Fatal("unexpected error writing source object:", err)
+	}
+
+	// Copy with override options
+	err = storage.CopyObject(ctx,
+		"TestCopyObjectWithOptions://:memory:/source.txt",
+		"TestCopyObjectWithOptions://:memory:/dest.txt",
+		storage.ContentType("application/json"),
+		storage.Metadata("key2", "value2"),
+	)
+	if err != nil {
+		t.Fatal("unexpected error copying object:", err)
+	}
+
+	// Verify destination has overridden metadata
+	info, err := bucket.HeadObject(ctx, "dest.txt")
+	if err != nil {
+		t.Fatal("unexpected error reading destination object:", err)
+	}
+
+	// Content-Type should be overridden
+	if info.ContentType != "application/json" {
+		t.Errorf("content type not overridden: %q", info.ContentType)
+	}
+
+	// Cache-Control should be preserved from source
+	if info.CacheControl != "max-age=3600" {
+		t.Errorf("cache control should be preserved: %q", info.CacheControl)
+	}
+
+	// Metadata should be merged
+	if info.Metadata["key1"] != "value1" {
+		t.Errorf("source metadata key1 should be preserved: %v", info.Metadata)
+	}
+	if info.Metadata["key2"] != "value2" {
+		t.Errorf("override metadata key2 should be present: %v", info.Metadata)
+	}
+}
+
+func TestCopyObjectAt(t *testing.T) {
+	bucket := memory.NewBucket(
+		&memory.Entry{Key: "source.txt", Value: []byte("custom registry content")},
+	)
+	registry := storage.SingleBucketRegistry(bucket)
+
+	ctx := t.Context()
+
+	// Use CopyObjectAt with custom registry
+	// The URI format must match the bucket location
+	bucketLocation := bucket.Location()
+	err := storage.CopyObjectAt(ctx, registry,
+		bucketLocation+"/source.txt",
+		bucketLocation+"/dest.txt",
+	)
+	if err != nil {
+		t.Fatal("unexpected error copying object:", err)
+	}
+
+	// Verify destination exists
+	r, info, err := bucket.GetObject(ctx, "dest.txt")
+	if err != nil {
+		t.Fatal("unexpected error reading destination object:", err)
+	}
+	defer r.Close()
+
+	b, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal("unexpected error reading destination object:", err)
+	}
+	if string(b) != "custom registry content" {
+		t.Fatalf("unexpected object data: %q", b)
+	}
+	if info.Size != int64(len("custom registry content")) {
+		t.Fatalf("unexpected object size: %d", info.Size)
+	}
+}
+
+func TestCopyObjectContextCancellation(t *testing.T) {
+	bucket := memory.NewBucket(
+		&memory.Entry{Key: "source.txt", Value: []byte("content")},
+	)
+	storage.Register("TestCopyObjectContextCancellation", storage.SingleBucketRegistry(bucket))
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	err := storage.CopyObject(ctx,
+		"TestCopyObjectContextCancellation://:memory:/source.txt",
+		"TestCopyObjectContextCancellation://:memory:/dest.txt",
+	)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got: %v", err)
+	}
+}

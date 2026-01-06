@@ -36,6 +36,7 @@ type Client interface {
 	HeadObject(context.Context, *s3.HeadObjectInput, ...func(*s3.Options)) (*s3.HeadObjectOutput, error)
 	GetObject(context.Context, *s3.GetObjectInput, ...func(*s3.Options)) (*s3.GetObjectOutput, error)
 	PutObject(context.Context, *s3.PutObjectInput, ...func(*s3.Options)) (*s3.PutObjectOutput, error)
+	CopyObject(context.Context, *s3.CopyObjectInput, ...func(*s3.Options)) (*s3.CopyObjectOutput, error)
 	DeleteObject(context.Context, *s3.DeleteObjectInput, ...func(*s3.Options)) (*s3.DeleteObjectOutput, error)
 	DeleteObjects(context.Context, *s3.DeleteObjectsInput, ...func(*s3.Options)) (*s3.DeleteObjectsOutput, error)
 	ListObjectsV2(context.Context, *s3.ListObjectsV2Input, ...func(*s3.Options)) (*s3.ListObjectsV2Output, error)
@@ -334,6 +335,68 @@ func (b *Bucket) DeleteObject(ctx context.Context, key string) error {
 
 	in := newDeleteObjectInput(b.bucket, key)
 	_, err := b.client.DeleteObject(ctx, in)
+	if err != nil {
+		return makeIcebergError(err)
+	}
+	return nil
+}
+
+func (b *Bucket) CopyObject(ctx context.Context, from, to string, options ...storage.PutOption) error {
+	if err := storage.ValidObjectKey(from); err != nil {
+		return err
+	}
+	if err := storage.ValidObjectKey(to); err != nil {
+		return err
+	}
+
+	putOptions := storage.NewPutOptions(options...)
+
+	// Get source object metadata for merging
+	srcInfo, err := b.HeadObject(ctx, from)
+	if err != nil {
+		return err
+	}
+
+	// Build CopyObject input with merged metadata
+	input := &s3.CopyObjectInput{
+		Bucket:            aws.String(b.bucket),
+		CopySource:        aws.String(b.bucket + "/" + from),
+		Key:               aws.String(to),
+		MetadataDirective: types.MetadataDirectiveReplace,
+	}
+
+	// Merge metadata: source metadata with overrides from options
+	if cc := putOptions.CacheControl(); cc != "" {
+		input.CacheControl = aws.String(cc)
+	} else if srcInfo.CacheControl != "" {
+		input.CacheControl = aws.String(srcInfo.CacheControl)
+	}
+
+	if ct := putOptions.ContentType(); ct != "application/octet-stream" {
+		input.ContentType = aws.String(ct)
+	} else if srcInfo.ContentType != "" {
+		input.ContentType = aws.String(srcInfo.ContentType)
+	}
+
+	if ce := putOptions.ContentEncoding(); ce != "" {
+		input.ContentEncoding = aws.String(ce)
+	} else if srcInfo.ContentEncoding != "" {
+		input.ContentEncoding = aws.String(srcInfo.ContentEncoding)
+	}
+
+	// Merge metadata maps (overrides win)
+	metadata := make(map[string]string)
+	for k, v := range srcInfo.Metadata {
+		metadata[k] = v
+	}
+	for k, v := range putOptions.Metadata() {
+		metadata[k] = v
+	}
+	if len(metadata) > 0 {
+		input.Metadata = metadata
+	}
+
+	_, err = b.client.CopyObject(ctx, input)
 	if err != nil {
 		return makeIcebergError(err)
 	}
