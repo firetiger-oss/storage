@@ -204,6 +204,27 @@ func (b *loggedBucket) DeleteObjects(ctx context.Context, objects iter.Seq2[stri
 	}
 }
 
+func (b *loggedBucket) CopyObject(ctx context.Context, from, to string, options ...PutOption) error {
+	start := time.Now()
+	err := b.bucket.CopyObject(ctx, from, to, options...)
+
+	const op = "CopyObject"
+	attrFrom := makeAttrKey(b, from)
+	attrTo := slog.String("to", to)
+	attrDuration := makeAttrDuration(start)
+	if err != nil {
+		if errors.Is(err, ErrObjectNotFound) {
+			b.logger.DebugContext(ctx, op, attrFrom, attrTo, attrDuration, makeAttrError(err))
+		} else {
+			b.logger.ErrorContext(ctx, op, attrFrom, attrTo, attrDuration, makeAttrError(err))
+		}
+	} else {
+		b.logger.DebugContext(ctx, op, attrFrom, attrTo, attrDuration)
+	}
+
+	return err
+}
+
 func (b *loggedBucket) ListObjects(ctx context.Context, options ...ListOption) iter.Seq2[Object, error] {
 	return func(yield func(Object, error) bool) {
 		start := time.Now()

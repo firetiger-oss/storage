@@ -192,6 +192,49 @@ func (c *Client) DeleteObjects(ctx context.Context, params *s3.DeleteObjectsInpu
 	return output, nil
 }
 
+func (c *Client) CopyObject(ctx context.Context, params *s3.CopyObjectInput, optFns ...func(*s3.Options)) (*s3.CopyObjectOutput, error) {
+	if err := context.Cause(ctx); err != nil {
+		return nil, err
+	}
+
+	// Parse copy source (format: "bucket/key" or "/bucket/key")
+	copySource := aws.ToString(params.CopySource)
+	copySource = strings.TrimPrefix(copySource, "/")
+	parts := strings.SplitN(copySource, "/", 2)
+	if len(parts) != 2 {
+		return nil, fmt.Errorf("invalid copy source: %s", copySource)
+	}
+	sourceKey := parts[1]
+	destKey := aws.ToString(params.Key)
+
+	// Build options from params (for REPLACE directive)
+	var options []storage.PutOption
+	if params.MetadataDirective == types.MetadataDirectiveReplace {
+		if params.ContentType != nil {
+			options = append(options, storage.ContentType(aws.ToString(params.ContentType)))
+		}
+		if params.CacheControl != nil {
+			options = append(options, storage.CacheControl(aws.ToString(params.CacheControl)))
+		}
+		if params.ContentEncoding != nil {
+			options = append(options, storage.ContentEncoding(aws.ToString(params.ContentEncoding)))
+		}
+		for k, v := range params.Metadata {
+			options = append(options, storage.Metadata(k, v))
+		}
+	}
+
+	// Use the memory bucket's CopyObject
+	if err := c.Bucket.CopyObject(ctx, sourceKey, destKey, options...); err != nil {
+		if errors.Is(err, storage.ErrObjectNotFound) {
+			return nil, &types.NoSuchKey{Message: aws.String(sourceKey)}
+		}
+		return nil, err
+	}
+
+	return &s3.CopyObjectOutput{}, nil
+}
+
 func (c *Client) ListObjectsV2(ctx context.Context, params *s3.ListObjectsV2Input, optFns ...func(*s3.Options)) (*s3.ListObjectsV2Output, error) {
 	if err := context.Cause(ctx); err != nil {
 		return nil, err

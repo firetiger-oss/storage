@@ -78,6 +78,22 @@ func (b *mountedBucket) DeleteObject(ctx context.Context, key string) error {
 	return errors.Join(err1, err2)
 }
 
+func (b *mountedBucket) CopyObject(ctx context.Context, from, to string, options ...PutOption) error {
+	fromInMount := strings.HasPrefix(from, b.mount.prefix)
+	toInMount := strings.HasPrefix(to, b.mount.prefix)
+
+	// Same context - delegate to appropriate bucket
+	if fromInMount && toInMount {
+		return b.mount.CopyObject(ctx, from, to, options...)
+	}
+	if !fromInMount && !toInMount {
+		return b.bucket.CopyObject(ctx, from, to, options...)
+	}
+
+	// Cross-mount copy - need streaming fallback
+	return copyObjectStreaming(ctx, b, from, b, to, options...)
+}
+
 func (b *mountedBucket) DeleteObjects(ctx context.Context, objects iter.Seq2[string, error]) iter.Seq2[string, error] {
 	return b.mount.DeleteObjects(ctx, func(yield func(string, error) bool) {
 		for key, err := range b.bucket.DeleteObjects(ctx, objects) {
@@ -299,6 +315,22 @@ func (b *mountedPrefixBucket) DeleteObject(ctx context.Context, key string) erro
 		return nil
 	}
 	return b.bucket.DeleteObject(ctx, strings.TrimPrefix(key, b.prefix))
+}
+
+func (b *mountedPrefixBucket) CopyObject(ctx context.Context, from, to string, options ...PutOption) error {
+	if !strings.HasPrefix(from, b.prefix) {
+		return fmt.Errorf("%s: %w", from, ErrObjectNotFound)
+	}
+	if !strings.HasPrefix(to, b.prefix) {
+		return fmt.Errorf("%s: %w", to, ErrObjectNotFound)
+	}
+	strippedFrom := strings.TrimPrefix(from, b.prefix)
+	strippedTo := strings.TrimPrefix(to, b.prefix)
+	err := b.bucket.CopyObject(ctx, strippedFrom, strippedTo, options...)
+	if err != nil {
+		err = b.scopeError(err)
+	}
+	return err
 }
 
 func (b *mountedPrefixBucket) DeleteObjects(ctx context.Context, objects iter.Seq2[string, error]) iter.Seq2[string, error] {

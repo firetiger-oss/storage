@@ -316,6 +316,80 @@ func (b *Bucket) DeleteObjects(ctx context.Context, objects iter.Seq2[string, er
 	}
 }
 
+func (b *Bucket) CopyObject(ctx context.Context, from, to string, options ...storage.PutOption) error {
+	if err := context.Cause(ctx); err != nil {
+		return err
+	}
+	if err := storage.ValidObjectKey(from); err != nil {
+		return err
+	}
+	if err := storage.ValidObjectKey(to); err != nil {
+		return err
+	}
+	if err := b.stat(); err != nil {
+		return err
+	}
+
+	// Open source file
+	srcPath := b.path(from)
+	srcFile, err := os.Open(srcPath)
+	if err != nil {
+		if isErrNotExist(err) {
+			err.(*os.PathError).Err = storage.ErrObjectNotFound
+		}
+		return err
+	}
+	defer srcFile.Close()
+
+	// Read source metadata
+	srcInfo, err := readObjectInfo(srcFile)
+	if err != nil {
+		if errors.Is(err, syscall.EISDIR) {
+			err = storage.ErrObjectNotFound
+		}
+		return err
+	}
+
+	// Build merged options (source metadata with overrides)
+	putOptions := storage.NewPutOptions(options...)
+	var mergedOpts []storage.PutOption
+
+	if cc := putOptions.CacheControl(); cc != "" {
+		mergedOpts = append(mergedOpts, storage.CacheControl(cc))
+	} else if srcInfo.CacheControl != "" {
+		mergedOpts = append(mergedOpts, storage.CacheControl(srcInfo.CacheControl))
+	}
+
+	if ct := putOptions.ContentType(); ct != "application/octet-stream" {
+		mergedOpts = append(mergedOpts, storage.ContentType(ct))
+	} else if srcInfo.ContentType != "" {
+		mergedOpts = append(mergedOpts, storage.ContentType(srcInfo.ContentType))
+	}
+
+	if ce := putOptions.ContentEncoding(); ce != "" {
+		mergedOpts = append(mergedOpts, storage.ContentEncoding(ce))
+	} else if srcInfo.ContentEncoding != "" {
+		mergedOpts = append(mergedOpts, storage.ContentEncoding(srcInfo.ContentEncoding))
+	}
+
+	// Merge metadata maps (overrides win)
+	for k, v := range srcInfo.Metadata {
+		mergedOpts = append(mergedOpts, storage.Metadata(k, v))
+	}
+	for k, v := range putOptions.Metadata() {
+		mergedOpts = append(mergedOpts, storage.Metadata(k, v))
+	}
+
+	// Reset file position for reading content
+	if _, err := srcFile.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+
+	// Use PutObject for the copy (handles temp file, directories, etc.)
+	_, err = b.PutObject(ctx, to, srcFile, mergedOpts...)
+	return err
+}
+
 func (b *Bucket) ListObjects(ctx context.Context, options ...storage.ListOption) iter.Seq2[storage.Object, error] {
 	listOptions := storage.NewListOptions(options...)
 

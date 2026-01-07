@@ -125,6 +125,17 @@ func (i *instrumentedBucket) DeleteObjects(ctx context.Context, objects iter.Seq
 	}
 }
 
+func (i *instrumentedBucket) CopyObject(ctx context.Context, from, to string, options ...PutOption) error {
+	ctx, span := oteltrace.Start(ctx, "storage.Bucket.CopyObject",
+		attribute.String("storage.bucket.location", i.base.Location()),
+		attribute.String("storage.bucket.copy.from", from),
+		attribute.String("storage.bucket.copy.to", to))
+	defer span.End()
+	err := i.base.CopyObject(ctx, from, to, options...)
+	oteltrace.RecordError(span, err)
+	return err
+}
+
 func (i *instrumentedBucket) ListObjects(ctx context.Context, options ...ListOption) iter.Seq2[Object, error] {
 	return func(yield func(Object, error) bool) {
 		listOptions := NewListOptions(options...)

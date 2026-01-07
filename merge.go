@@ -84,6 +84,11 @@ func (m *mergedBucket) PutObject(ctx context.Context, key string, value io.Reade
 	return m.buckets[0].PutObject(ctx, key, value, options...)
 }
 
+func (m *mergedBucket) CopyObject(ctx context.Context, from, to string, options ...PutOption) error {
+	// Copy uses streaming fallback since source could be in any bucket
+	return copyObjectStreaming(ctx, m, from, m, to, options...)
+}
+
 func (m *mergedBucket) DeleteObject(ctx context.Context, key string) error {
 	return concurrent.RunTasks(ctx, m.buckets, func(ctx context.Context, bucket Bucket) error {
 		return bucket.DeleteObject(ctx, key)

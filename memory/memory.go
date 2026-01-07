@@ -297,6 +297,72 @@ func (b *Bucket) DeleteObjects(ctx context.Context, objects iter.Seq2[string, er
 	}
 }
 
+func (b *Bucket) CopyObject(ctx context.Context, from, to string, options ...storage.PutOption) error {
+	if err := context.Cause(ctx); err != nil {
+		return err
+	}
+	if err := storage.ValidObjectKey(from); err != nil {
+		return err
+	}
+	if err := storage.ValidObjectKey(to); err != nil {
+		return err
+	}
+
+	putOptions := storage.NewPutOptions(options...)
+
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+
+	srcObj, ok := b.objects[from]
+	if !ok {
+		return fmt.Errorf("%s: %w", from, storage.ErrObjectNotFound)
+	}
+
+	// Create new object with copied data
+	newObj := object{
+		value:        slices.Clone(srcObj.value),
+		lastModified: time.Now(),
+	}
+
+	// Merge metadata: source metadata with overrides from options
+	if cc := putOptions.CacheControl(); cc != "" {
+		newObj.cacheControl = cc
+	} else {
+		newObj.cacheControl = srcObj.cacheControl
+	}
+
+	if ct := putOptions.ContentType(); ct != "application/octet-stream" {
+		newObj.contentType = ct
+	} else {
+		newObj.contentType = srcObj.contentType
+	}
+
+	if ce := putOptions.ContentEncoding(); ce != "" {
+		newObj.contentEncoding = ce
+	} else {
+		newObj.contentEncoding = srcObj.contentEncoding
+	}
+
+	// Merge metadata maps (overrides win)
+	newObj.metadata = maps.Clone(srcObj.metadata)
+	if newObj.metadata == nil {
+		newObj.metadata = make(map[string]string)
+	}
+	for k, v := range putOptions.Metadata() {
+		newObj.metadata[k] = v
+	}
+
+	newObj.etag = hashObject(newObj.value)
+
+	if b.objects == nil {
+		b.objects = make(map[string]object)
+	}
+	b.objects[to] = newObj
+	b.notify(to)
+
+	return nil
+}
+
 func (b *Bucket) notify(keys ...string) {
 	for l := range b.listeners {
 		l.notify(keys...)

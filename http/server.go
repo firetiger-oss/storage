@@ -371,6 +371,12 @@ func handlePUT(w http.ResponseWriter, r *http.Request, b storage.Bucket, h *Hand
 		}
 	}
 
+	// Handle CopyObject operation (PUT with X-Amz-Copy-Source header)
+	if copySource := r.Header.Get("X-Amz-Copy-Source"); copySource != "" {
+		handleCopyObject(w, r, b, h, copySource, options)
+		return
+	}
+
 	if h.presignRedirect {
 		presignedURL, err := b.PresignPutObject(r.Context(), makeKey(r), time.Hour, options...)
 		if err != nil {
@@ -402,6 +408,50 @@ func handlePUT(w http.ResponseWriter, r *http.Request, b storage.Bucket, h *Hand
 	setObjectSize(header, object.Size)
 	setHeaderIfNotEmpty(header, "Etag", object.ETag)
 	setHeaderIfNotEmpty(header, "Last-Modified", formatTime(object.LastModified))
+}
+
+func handleCopyObject(w http.ResponseWriter, r *http.Request, b storage.Bucket, h *HandlerOptions, copySource string, options []storage.PutOption) {
+	// Parse copy source: format is "/bucket/key"
+	copySource = strings.TrimPrefix(copySource, "/")
+	sourceBucket, sourceKey, ok := strings.Cut(copySource, "/")
+	if !ok {
+		writeS3Error(w, "InvalidArgument", "Invalid x-amz-copy-source header", copySource, http.StatusBadRequest)
+		return
+	}
+	destKey := makeKey(r)
+
+	// Validate that the source bucket matches this server's bucket
+	_, expectedBucket, _ := uri.Split(h.location)
+	if expectedBucket != "" && sourceBucket != expectedBucket {
+		writeS3Error(w, "AccessDenied", fmt.Sprintf("Cross-bucket copy not supported: source bucket %q does not match %q", sourceBucket, expectedBucket), copySource, http.StatusForbidden)
+		return
+	}
+
+	if err := b.CopyObject(r.Context(), sourceKey, destKey, options...); err != nil {
+		writeError(w, err)
+		return
+	}
+
+	// Get the destination object info for the response
+	object, err := b.HeadObject(r.Context(), destKey)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+
+	// Return CopyObjectResult XML response
+	header := w.Header()
+	header.Set("Content-Type", "application/xml")
+	setHeaderIfNotEmpty(header, "Etag", object.ETag)
+	setHeaderIfNotEmpty(header, "Last-Modified", formatTime(object.LastModified))
+
+	result := CopyObjectResult{
+		ETag:         object.ETag,
+		LastModified: formatTimeS3(object.LastModified), // S3 SDK expects RFC3339 format
+	}
+	encoder := xml.NewEncoder(w)
+	encoder.Indent("", "  ")
+	encoder.Encode(result)
 }
 
 func handlePOST(w http.ResponseWriter, r *http.Request, b storage.Bucket, h *HandlerOptions) {
