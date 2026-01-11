@@ -97,6 +97,28 @@ func TestSplit(t *testing.T) {
 			path:     "path/to/object",
 		},
 
+		// Local file paths with . and .. directory indicators
+		{
+			uri:      "/tmp/.",
+			scheme:   "file",
+			location: "",
+			path:     "tmp/",
+		},
+
+		{
+			uri:      "/tmp/..",
+			scheme:   "file",
+			location: "",
+			path:     "",
+		},
+
+		{
+			uri:      "/tmp/foo/..",
+			scheme:   "file",
+			location: "",
+			path:     "tmp/",
+		},
+
 		// Additional file:// test cases to verify the special behavior
 		{
 			uri:      "file:///",
