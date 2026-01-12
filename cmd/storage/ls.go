@@ -22,7 +22,7 @@ func init() {
 	lsCmd.Flags().BoolP("recursive", "r", false, "List recursively")
 	lsCmd.Flags().StringP("delimiter", "d", "/", "Delimiter for directory listing")
 	lsCmd.Flags().StringP("start-after", "s", "", "Start listing after this key")
-	lsCmd.Flags().IntP("limit", "n", 1000, "Maximum number of objects to list (0 for unlimited)")
+	lsCmd.Flags().IntP("limit", "n", 0, "Maximum number of objects to list (0 for unlimited)")
 	lsCmd.Flags().StringP("output", "o", "text", "Output format: text or json")
 }
 

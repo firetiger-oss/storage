@@ -48,8 +48,9 @@ func isLocalFilePath(s string) bool {
 // expandFilePath expands a local file path to an absolute path.
 // It handles ~ for home directory and resolves relative paths.
 func expandFilePath(s string) string {
-	// Preserve trailing slash
-	hasTrailingSlash := strings.HasSuffix(s, "/")
+	// Preserve trailing slash (also handle . and .. as directory indicators)
+	base := filepath.Base(filepath.FromSlash(s))
+	hasTrailingSlash := strings.HasSuffix(s, "/") || base == "." || base == ".."
 
 	// Convert from URI slash format to native path for os operations
 	nativePath := filepath.FromSlash(s)
