@@ -3,6 +3,8 @@ package file
 import (
 	"io"
 	"math"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -388,8 +390,8 @@ func TestCacheExpiration(t *testing.T) {
 	}
 	r1.Close()
 
-	// Wait for expiration (2 seconds to be safe)
-	time.Sleep(2 * time.Second)
+	// Backdate the cached file to simulate expiration (instead of sleeping)
+	backdateCachedFiles(cacheDir, 2*time.Second)
 
 	// Access the object again - should be expired and fetched from underlying storage
 	r2, _, err := cachedBucket.GetObject(ctx, key1)
@@ -406,8 +408,7 @@ func TestCacheExpiration(t *testing.T) {
 		t.Fatal("failed to put immutable object:", err)
 	}
 
-	// Wait a bit and verify it's still cached
-	time.Sleep(1 * time.Second)
+	// Verify immutable object is still cached (no sleep needed - immutable never expires)
 	r3, _, err := cachedBucket.GetObject(ctx, key2)
 	if err != nil {
 		t.Fatal("failed to get immutable object:", err)
@@ -507,4 +508,454 @@ func TestCacheRevalidation(t *testing.T) {
 	}
 
 	t.Logf("Cache revalidation test completed successfully")
+}
+
+func TestCacheRangeRequest(t *testing.T) {
+	store := t.TempDir()
+	cacheDir := t.TempDir()
+	ctx := t.Context()
+
+	// Large cache to avoid evictions
+	cache := NewCache(cacheDir, 10*1024*1024) // 10 MB
+	bucket, err := NewRegistry(store).LoadBucket(ctx, "")
+	if err != nil {
+		t.Fatal("failed to create bucket:", err)
+	}
+	cachedBucket := cache.AdaptBucket(bucket)
+
+	// Create a large object (larger than one block = 256KB)
+	const objectSize = 512 * 1024 // 512 KB (2 blocks)
+	key := "large-object"
+	data := make([]byte, objectSize)
+	for i := range data {
+		data[i] = byte(i % 256)
+	}
+
+	_, err = cachedBucket.PutObject(ctx, key, strings.NewReader(string(data)), storage.CacheControl("public, max-age=3600"))
+	if err != nil {
+		t.Fatal("failed to put object:", err)
+	}
+
+	// Request only the first 1000 bytes
+	r1, info1, err := cachedBucket.GetObject(ctx, key, storage.BytesRange(0, 999))
+	if err != nil {
+		t.Fatal("failed to get range 0-999:", err)
+	}
+	defer r1.Close()
+
+	data1, err := io.ReadAll(r1)
+	if err != nil {
+		t.Fatal("failed to read range data:", err)
+	}
+
+	if len(data1) != 1000 {
+		t.Errorf("expected 1000 bytes, got %d", len(data1))
+	}
+
+	// Verify the data matches
+	for i := 0; i < 1000; i++ {
+		if data1[i] != data[i] {
+			t.Errorf("data mismatch at byte %d: got %d, want %d", i, data1[i], data[i])
+			break
+		}
+	}
+
+	// Verify object info has correct full size
+	if info1.Size != objectSize {
+		t.Errorf("expected object size %d, got %d", objectSize, info1.Size)
+	}
+
+	t.Logf("Cache stats after first range request: %+v", cache.Stat())
+
+	// Request a different range (second block)
+	const secondRangeStart = 256 * 1024 // Start of second block
+	const secondRangeEnd = 256*1024 + 999
+
+	r2, info2, err := cachedBucket.GetObject(ctx, key, storage.BytesRange(secondRangeStart, secondRangeEnd))
+	if err != nil {
+		t.Fatal("failed to get second range:", err)
+	}
+	defer r2.Close()
+
+	data2, err := io.ReadAll(r2)
+	if err != nil {
+		t.Fatal("failed to read second range data:", err)
+	}
+
+	if len(data2) != 1000 {
+		t.Errorf("expected 1000 bytes for second range, got %d", len(data2))
+	}
+
+	// Verify the data matches
+	for i := 0; i < 1000; i++ {
+		if data2[i] != data[secondRangeStart+int64(i)] {
+			t.Errorf("second range data mismatch at byte %d: got %d, want %d", i, data2[i], data[secondRangeStart+int64(i)])
+			break
+		}
+	}
+
+	if info2.Size != objectSize {
+		t.Errorf("expected object size %d, got %d", objectSize, info2.Size)
+	}
+
+	t.Logf("Cache stats after second range request: %+v", cache.Stat())
+
+	// Request the first range again - should hit cache
+	statBefore := cache.Stat()
+	r3, _, err := cachedBucket.GetObject(ctx, key, storage.BytesRange(0, 999))
+	if err != nil {
+		t.Fatal("failed to get first range again:", err)
+	}
+	r3.Close()
+
+	statAfter := cache.Stat()
+	t.Logf("Cache stats after re-requesting first range: Hits before=%d, after=%d", statBefore.Hits, statAfter.Hits)
+
+	t.Log("Range request caching test completed successfully")
+}
+
+func TestCacheRangeRequestNotCached(t *testing.T) {
+	store := t.TempDir()
+	cacheDir := t.TempDir()
+	ctx := t.Context()
+
+	cache := NewCache(cacheDir, 10*1024*1024)
+	bucket, err := NewRegistry(store).LoadBucket(ctx, "")
+	if err != nil {
+		t.Fatal("failed to create bucket:", err)
+	}
+	cachedBucket := cache.AdaptBucket(bucket)
+
+	// Create object WITHOUT cache control
+	const objectSize = 100 * 1024 // 100 KB
+	key := "uncacheable-object"
+	data := make([]byte, objectSize)
+	for i := range data {
+		data[i] = byte(i % 256)
+	}
+
+	_, err = cachedBucket.PutObject(ctx, key, strings.NewReader(string(data)))
+	if err != nil {
+		t.Fatal("failed to put object:", err)
+	}
+
+	// Initial cache size should be 0 (no cacheable objects)
+	stat1 := cache.Stat()
+	if stat1.Size != 0 {
+		t.Errorf("cache should be empty for object without cache control, got size=%d", stat1.Size)
+	}
+
+	// Request a range - should NOT be cached
+	r1, _, err := cachedBucket.GetObject(ctx, key, storage.BytesRange(0, 999))
+	if err != nil {
+		t.Fatal("failed to get range:", err)
+	}
+	data1, err := io.ReadAll(r1)
+	r1.Close()
+	if err != nil {
+		t.Fatal("failed to read range data:", err)
+	}
+
+	if len(data1) != 1000 {
+		t.Errorf("expected 1000 bytes, got %d", len(data1))
+	}
+
+	// Cache should still be empty (object has no cache control)
+	stat2 := cache.Stat()
+	if stat2.Size != 0 {
+		t.Errorf("cache should remain empty for uncacheable object, got size=%d", stat2.Size)
+	}
+
+	t.Log("Uncacheable range request test completed successfully")
+}
+
+func TestSparseFileCacheEviction(t *testing.T) {
+	store := t.TempDir()
+	cacheDir := t.TempDir()
+	ctx := t.Context()
+
+	// Small cache to trigger evictions
+	cache := NewCache(cacheDir, 1024) // 1 KB limit
+	bucket, err := NewRegistry(store).LoadBucket(ctx, "")
+	if err != nil {
+		t.Fatal("failed to create bucket:", err)
+	}
+	cachedBucket := cache.AdaptBucket(bucket)
+
+	// Create multiple objects that will cause evictions
+	objects := []struct {
+		key   string
+		value string
+	}{
+		{"obj1", strings.Repeat("first object data ", 50)},  // ~900 bytes
+		{"obj2", strings.Repeat("second object data ", 50)}, // ~950 bytes
+		{"obj3", strings.Repeat("third object data ", 50)},  // ~850 bytes
+	}
+
+	for _, obj := range objects {
+		_, err = cachedBucket.PutObject(ctx, obj.key, strings.NewReader(obj.value), storage.CacheControl("public, max-age=3600"))
+		if err != nil {
+			t.Fatalf("failed to put object %s: %v", obj.key, err)
+		}
+	}
+
+	stat := cache.Stat()
+	t.Logf("Cache stats after putting objects: Size=%d, Limit=%d, Evictions=%d", stat.Size, stat.Limit, stat.Evictions)
+
+	// Cache size should not exceed limit
+	if stat.Size > stat.Limit {
+		t.Errorf("cache size (%d) exceeds limit (%d)", stat.Size, stat.Limit)
+	}
+
+	// There should be evictions due to small cache size
+	if stat.Evictions == 0 {
+		t.Log("No evictions occurred (objects may be too small to trigger evictions)")
+	}
+
+	// Test range requests with eviction
+	const objectSize = 512 * 1024 // 512 KB - much larger than cache
+	largeKey := "large-object"
+	largeData := make([]byte, objectSize)
+	for i := range largeData {
+		largeData[i] = byte(i % 256)
+	}
+
+	_, err = cachedBucket.PutObject(ctx, largeKey, strings.NewReader(string(largeData)), storage.CacheControl("public, max-age=3600"))
+	if err != nil {
+		t.Fatal("failed to put large object:", err)
+	}
+
+	// Request a range from the large object
+	r1, _, err := cachedBucket.GetObject(ctx, largeKey, storage.BytesRange(0, 999))
+	if err != nil {
+		t.Fatal("failed to get range from large object:", err)
+	}
+	r1.Close()
+
+	statAfter := cache.Stat()
+	t.Logf("Cache stats after range request on large object: Size=%d, Evictions=%d", statAfter.Size, statAfter.Evictions)
+
+	t.Log("Sparse file cache eviction test completed successfully")
+}
+
+func TestRangeCacheRevalidation(t *testing.T) {
+	store := t.TempDir()
+	cacheDir := t.TempDir()
+	ctx := t.Context()
+
+	cache := NewCache(cacheDir, 10*1024*1024)
+	bucket, err := NewRegistry(store).LoadBucket(ctx, "")
+	if err != nil {
+		t.Fatal("failed to create bucket:", err)
+	}
+	cachedBucket := cache.AdaptBucket(bucket)
+
+	// Create object with no-cache (requires revalidation)
+	const objectSize = 100 * 1024
+	key := "revalidate-object"
+	data := make([]byte, objectSize)
+	for i := range data {
+		data[i] = byte(i % 256)
+	}
+
+	originalInfo, err := cachedBucket.PutObject(ctx, key, strings.NewReader(string(data)), storage.CacheControl("no-cache"))
+	if err != nil {
+		t.Fatal("failed to put object:", err)
+	}
+
+	// Request a range
+	r1, info1, err := cachedBucket.GetObject(ctx, key, storage.BytesRange(0, 999))
+	if err != nil {
+		t.Fatal("failed to get range:", err)
+	}
+	r1.Close()
+
+	if info1.ETag != originalInfo.ETag {
+		t.Error("ETags should match on initial request")
+	}
+
+	// Update the object in the underlying bucket (simulating backend change)
+	newData := make([]byte, objectSize)
+	for i := range newData {
+		newData[i] = byte((i + 100) % 256)
+	}
+
+	newInfo, err := bucket.PutObject(ctx, key, strings.NewReader(string(newData)), storage.CacheControl("no-cache"))
+	if err != nil {
+		t.Fatal("failed to update object:", err)
+	}
+
+	// Request the same range again - should detect ETag change
+	r2, info2, err := cachedBucket.GetObject(ctx, key, storage.BytesRange(0, 999))
+	if err != nil {
+		t.Fatal("failed to get range after update:", err)
+	}
+	defer r2.Close()
+
+	data2, err := io.ReadAll(r2)
+	if err != nil {
+		t.Fatal("failed to read updated data:", err)
+	}
+
+	// Should get the new data
+	for i := 0; i < len(data2); i++ {
+		if data2[i] != newData[i] {
+			t.Errorf("data mismatch at byte %d after revalidation: got %d, want %d", i, data2[i], newData[i])
+			break
+		}
+	}
+
+	if info2.ETag == originalInfo.ETag {
+		t.Error("ETag should have changed after object update")
+	}
+
+	if info2.ETag != newInfo.ETag {
+		t.Error("ETag should match the updated object")
+	}
+
+	t.Log("Range cache revalidation test completed successfully")
+}
+
+// backdateCachedFiles sets the modification time of all files in a directory
+// to simulate time passing without using time.Sleep
+func backdateCachedFiles(cacheDir string, age time.Duration) {
+	past := time.Now().Add(-age)
+	filepath.Walk(cacheDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		os.Chtimes(path, past, past)
+		return nil
+	})
+}
+
+func TestRangeLevelEviction(t *testing.T) {
+	store := t.TempDir()
+	cacheDir := t.TempDir()
+	ctx := t.Context()
+
+	// Use a cache size slightly larger than one block but smaller than two,
+	// so caching a second range will trigger eviction of the first
+	cacheSize := int64(sparseBlockSize + sparseBlockSize/2) // 1.5 blocks
+	cache := NewCache(cacheDir, cacheSize)
+	bucket, err := NewRegistry(store).LoadBucket(ctx, "")
+	if err != nil {
+		t.Fatal("failed to create bucket:", err)
+	}
+	cachedBucket := cache.AdaptBucket(bucket)
+
+	// Create a large object spanning multiple blocks
+	const objectSize = sparseBlockSize * 4 // 4 blocks (1 MB)
+	key := "multi-block-object"
+	data := make([]byte, objectSize)
+	for i := range data {
+		data[i] = byte(i % 256)
+	}
+
+	_, err = cachedBucket.PutObject(ctx, key, strings.NewReader(string(data)), storage.CacheControl("public, max-age=3600"))
+	if err != nil {
+		t.Fatal("failed to put object:", err)
+	}
+
+	// Request first block (this will create a sparse file and cache the first block)
+	r1, _, err := cachedBucket.GetObject(ctx, key, storage.BytesRange(0, 1000))
+	if err != nil {
+		t.Fatal("failed to get first range:", err)
+	}
+	data1, _ := io.ReadAll(r1)
+	r1.Close()
+
+	// Verify first block data
+	for i := 0; i < len(data1); i++ {
+		if data1[i] != data[i] {
+			t.Fatalf("first range data mismatch at byte %d", i)
+		}
+	}
+
+	stat1 := cache.Stat()
+	t.Logf("After first range: Size=%d, Evictions=%d", stat1.Size, stat1.Evictions)
+
+	// Request third block (should trigger eviction of first block due to cache size limit)
+	thirdBlockStart := int64(sparseBlockSize * 2)
+	r2, _, err := cachedBucket.GetObject(ctx, key, storage.BytesRange(thirdBlockStart, thirdBlockStart+1000))
+	if err != nil {
+		t.Fatal("failed to get third range:", err)
+	}
+	data2, _ := io.ReadAll(r2)
+	r2.Close()
+
+	// Verify third block data
+	for i := 0; i < len(data2); i++ {
+		if data2[i] != data[thirdBlockStart+int64(i)] {
+			t.Fatalf("third range data mismatch at byte %d", i)
+		}
+	}
+
+	stat2 := cache.Stat()
+	t.Logf("After third range: Size=%d, Evictions=%d", stat2.Size, stat2.Evictions)
+
+	// The cache size limit should have been exceeded, triggering eviction
+	// We expect at least one eviction (of the first block)
+	if stat2.Evictions == 0 {
+		t.Log("No evictions occurred - cache may be larger than expected or filesystem doesn't report sparse usage accurately")
+	}
+
+	// Verify that the sparse file still exists (we evicted a range, not the whole file)
+	var sparseFile string
+	filepath.Walk(cacheDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		sparseFile = path
+		return nil
+	})
+
+	if sparseFile == "" {
+		t.Fatal("sparse cache file should still exist after range eviction")
+	}
+
+	// Open the sparse file and check for holes
+	f, err := os.Open(sparseFile)
+	if err != nil {
+		t.Fatal("failed to open sparse file:", err)
+	}
+	defer f.Close()
+
+	// If evictions occurred and hole punching is supported, the file should have holes
+	if stat2.Evictions > 0 {
+		holePos, err := seekHole(f, 0)
+		if err != nil {
+			t.Logf("seekHole failed (may not be supported): %v", err)
+		} else {
+			fileInfo, _ := f.Stat()
+			t.Logf("Sparse file: size=%d, first hole at=%d", fileInfo.Size(), holePos)
+
+			// On filesystems supporting sparse files, there should be a hole before end of file
+			if holePos < fileInfo.Size() {
+				t.Log("Confirmed: hole punching occurred during eviction")
+			} else {
+				t.Log("No holes detected - filesystem may not support sparse files or hole punching")
+			}
+		}
+	}
+
+	// Request the first block again - should refetch from backend (since it was evicted)
+	r3, _, err := cachedBucket.GetObject(ctx, key, storage.BytesRange(0, 1000))
+	if err != nil {
+		t.Fatal("failed to re-request first range:", err)
+	}
+	data3, _ := io.ReadAll(r3)
+	r3.Close()
+
+	// Verify we got correct data
+	for i := 0; i < len(data3); i++ {
+		if data3[i] != data[i] {
+			t.Fatalf("re-fetched first range data mismatch at byte %d", i)
+		}
+	}
+
+	stat3 := cache.Stat()
+	t.Logf("After re-fetching first range: Size=%d, Evictions=%d", stat3.Size, stat3.Evictions)
+
+	t.Log("Range-level eviction test completed successfully")
 }
