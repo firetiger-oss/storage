@@ -1,0 +1,243 @@
+package notification_test
+
+import (
+	"context"
+	"io"
+	"net/http"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/firetiger-oss/storage"
+	"github.com/firetiger-oss/storage/memory"
+	"github.com/firetiger-oss/storage/notification"
+)
+
+func TestObjectHandlerCreateEvent(t *testing.T) {
+	// Create a memory bucket with test data
+	bucket := memory.NewBucket(&memory.Entry{
+		Key:   "path/to/object.json",
+		Value: []byte(`{"hello":"world"}`),
+	})
+
+	// Add content type via PutObject
+	_, err := bucket.PutObject(context.Background(), "path/to/object.json",
+		strings.NewReader(`{"hello":"world"}`),
+		storage.ContentType("application/json"),
+	)
+	if err != nil {
+		t.Fatalf("failed to put object: %v", err)
+	}
+
+	// Create a registry that returns our memory bucket for s3://test-bucket
+	registry := storage.RegistryFunc(func(ctx context.Context, uri string) (storage.Bucket, error) {
+		return bucket, nil
+	})
+
+	// Track what the handler receives
+	var receivedMethod string
+	var receivedHost string
+	var receivedPath string
+	var receivedBody []byte
+	var receivedContentType string
+
+	httpHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedMethod = r.Method
+		receivedHost = r.Host
+		receivedPath = r.URL.Path
+		receivedBody, _ = io.ReadAll(r.Body)
+		receivedContentType = r.Header.Get("Content-Type")
+		w.WriteHeader(http.StatusOK)
+	})
+
+	objectHandler := notification.NewObjectHandler(httpHandler, notification.WithRegistry(registry))
+
+	event := notification.Event{
+		Type:   notification.ObjectCreated,
+		Bucket: "test-bucket",
+		Key:    "path/to/object.json",
+		Size:   17,
+		Time:   time.Now(),
+		Source: "aws:s3",
+	}
+
+	err = objectHandler.HandleEvent(context.Background(), &event)
+	if err != nil {
+		t.Fatalf("HandleEvent failed: %v", err)
+	}
+
+	// Verify the HTTP request
+	if receivedMethod != http.MethodPost {
+		t.Errorf("expected method POST, got %s", receivedMethod)
+	}
+	if receivedHost != "test-bucket" {
+		t.Errorf("expected host test-bucket, got %s", receivedHost)
+	}
+	if receivedPath != "/path/to/object.json" {
+		t.Errorf("expected path /path/to/object.json, got %s", receivedPath)
+	}
+	if string(receivedBody) != `{"hello":"world"}` {
+		t.Errorf("expected body {\"hello\":\"world\"}, got %s", string(receivedBody))
+	}
+	if receivedContentType != "application/json" {
+		t.Errorf("expected content-type application/json, got %s", receivedContentType)
+	}
+}
+
+func TestObjectHandlerDeleteEvent(t *testing.T) {
+	// For delete events, we don't need the object in the bucket
+	bucket := memory.NewBucket()
+
+	registry := storage.RegistryFunc(func(ctx context.Context, uri string) (storage.Bucket, error) {
+		return bucket, nil
+	})
+
+	var receivedMethod string
+	var receivedHost string
+	var receivedPath string
+
+	httpHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedMethod = r.Method
+		receivedHost = r.Host
+		receivedPath = r.URL.Path
+		w.WriteHeader(http.StatusOK)
+	})
+
+	objectHandler := notification.NewObjectHandler(httpHandler, notification.WithRegistry(registry))
+
+	event := notification.Event{
+		Type:   notification.ObjectDeleted,
+		Bucket: "test-bucket",
+		Key:    "path/to/deleted.json",
+		Time:   time.Now(),
+		Source: "aws:s3",
+	}
+
+	err := objectHandler.HandleEvent(context.Background(), &event)
+	if err != nil {
+		t.Fatalf("HandleEvent failed: %v", err)
+	}
+
+	// Verify the HTTP request
+	if receivedMethod != http.MethodDelete {
+		t.Errorf("expected method DELETE, got %s", receivedMethod)
+	}
+	if receivedHost != "test-bucket" {
+		t.Errorf("expected host test-bucket, got %s", receivedHost)
+	}
+	if receivedPath != "/path/to/deleted.json" {
+		t.Errorf("expected path /path/to/deleted.json, got %s", receivedPath)
+	}
+}
+
+func TestObjectHandlerHandlerError(t *testing.T) {
+	bucket := memory.NewBucket(&memory.Entry{
+		Key:   "test.txt",
+		Value: []byte("test content"),
+	})
+
+	registry := storage.RegistryFunc(func(ctx context.Context, uri string) (storage.Bucket, error) {
+		return bucket, nil
+	})
+
+	httpHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	})
+
+	objectHandler := notification.NewObjectHandler(httpHandler, notification.WithRegistry(registry))
+
+	event := notification.Event{
+		Type:   notification.ObjectCreated,
+		Bucket: "test-bucket",
+		Key:    "test.txt",
+		Source: "aws:s3",
+	}
+
+	err := objectHandler.HandleEvent(context.Background(), &event)
+	if err == nil {
+		t.Fatal("expected error for handler failure")
+	}
+	if !strings.Contains(err.Error(), "500") {
+		t.Errorf("expected error to contain status 500, got: %v", err)
+	}
+}
+
+func TestObjectHandlerObjectNotFound(t *testing.T) {
+	bucket := memory.NewBucket() // Empty bucket
+
+	registry := storage.RegistryFunc(func(ctx context.Context, uri string) (storage.Bucket, error) {
+		return bucket, nil
+	})
+
+	httpHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	objectHandler := notification.NewObjectHandler(httpHandler, notification.WithRegistry(registry))
+
+	event := notification.Event{
+		Type:   notification.ObjectCreated,
+		Bucket: "test-bucket",
+		Key:    "nonexistent.txt",
+		Source: "aws:s3",
+	}
+
+	err := objectHandler.HandleEvent(context.Background(), &event)
+	if err == nil {
+		t.Fatal("expected error for object not found")
+	}
+	if !strings.Contains(err.Error(), "object not found") {
+		t.Errorf("expected object not found error, got: %v", err)
+	}
+}
+
+func TestObjectHandlerEventHeaders(t *testing.T) {
+	bucket := memory.NewBucket()
+	_, err := bucket.PutObject(context.Background(), "test.txt",
+		strings.NewReader("content"),
+		storage.ContentType("text/plain"),
+		storage.Metadata("custom-key", "custom-value"),
+	)
+	if err != nil {
+		t.Fatalf("failed to put object: %v", err)
+	}
+
+	registry := storage.RegistryFunc(func(ctx context.Context, uri string) (storage.Bucket, error) {
+		return bucket, nil
+	})
+
+	var headers http.Header
+
+	httpHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		headers = r.Header.Clone()
+		w.WriteHeader(http.StatusOK)
+	})
+
+	objectHandler := notification.NewObjectHandler(httpHandler, notification.WithRegistry(registry))
+
+	eventTime := time.Date(2025, 1, 15, 10, 30, 0, 0, time.UTC)
+	event := notification.Event{
+		Type:   notification.ObjectCreated,
+		Bucket: "test-bucket",
+		Key:    "test.txt",
+		Source: "aws:s3",
+		Time:   eventTime,
+	}
+
+	err = objectHandler.HandleEvent(context.Background(), &event)
+	if err != nil {
+		t.Fatalf("HandleEvent failed: %v", err)
+	}
+
+	if headers.Get("X-Event-Source") != "aws:s3" {
+		t.Errorf("expected X-Event-Source aws:s3, got %s", headers.Get("X-Event-Source"))
+	}
+	if headers.Get("X-Event-Time") != eventTime.Format(time.RFC3339) {
+		t.Errorf("expected X-Event-Time %s, got %s",
+			eventTime.Format(time.RFC3339), headers.Get("X-Event-Time"))
+	}
+	if headers.Get("X-Amz-Meta-custom-key") != "custom-value" {
+		t.Errorf("expected X-Amz-Meta-custom-key custom-value, got %s",
+			headers.Get("X-Amz-Meta-custom-key"))
+	}
+}
