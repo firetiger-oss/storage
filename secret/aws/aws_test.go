@@ -52,9 +52,15 @@ func (m *mockClient) CreateSecret(ctx context.Context, params *secretsmanager.Cr
 
 	now := time.Now()
 	versionID := "v1-" + now.Format("20060102150405.000")
+	var val []byte
+	if params.SecretString != nil {
+		val = []byte(*params.SecretString)
+	} else {
+		val = params.SecretBinary
+	}
 	m.secrets[name] = &mockSecret{
 		versions: []mockVersion{
-			{id: versionID, value: params.SecretBinary, createdAt: now},
+			{id: versionID, value: val, createdAt: now},
 		},
 		tags:        params.Tags,
 		description: aws.ToString(params.Description),
@@ -154,9 +160,15 @@ func (m *mockClient) PutSecretValue(ctx context.Context, params *secretsmanager.
 	now := time.Now()
 	versionNum := len(sec.versions) + 1
 	versionID := "v" + string(rune('0'+versionNum)) + "-" + now.Format("20060102150405.000")
+	var val []byte
+	if params.SecretString != nil {
+		val = []byte(*params.SecretString)
+	} else {
+		val = params.SecretBinary
+	}
 	sec.versions = append(sec.versions, mockVersion{
 		id:        versionID,
-		value:     params.SecretBinary,
+		value:     val,
 		createdAt: now,
 	})
 	sec.updatedAt = now
