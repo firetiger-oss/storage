@@ -6,6 +6,7 @@ import (
 	"iter"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -78,9 +79,13 @@ func (m *Manager) CreateSecret(ctx context.Context, name string, value secret.Va
 	}
 
 	input := &secretsmanager.CreateSecretInput{
-		Name:         aws.String(name),
-		SecretBinary: value,
-		Tags:         awsTags,
+		Name: aws.String(name),
+		Tags: awsTags,
+	}
+	if utf8.Valid(value) {
+		input.SecretString = aws.String(string(value))
+	} else {
+		input.SecretBinary = value
 	}
 
 	if desc := opts.Description(); desc != "" {
@@ -115,11 +120,11 @@ func (m *Manager) GetSecretValue(ctx context.Context, name string, options ...se
 		return nil, "", convertError(err)
 	}
 
-	if result.SecretBinary != nil {
-		return result.SecretBinary, aws.ToString(result.VersionId), nil
-	}
 	if result.SecretString != nil {
 		return secret.Value(*result.SecretString), aws.ToString(result.VersionId), nil
+	}
+	if result.SecretBinary != nil {
+		return result.SecretBinary, aws.ToString(result.VersionId), nil
 	}
 	return nil, aws.ToString(result.VersionId), nil
 }
@@ -149,10 +154,15 @@ func (m *Manager) UpdateSecret(ctx context.Context, name string, value secret.Va
 		return secret.Info{}, err
 	}
 	opts := secret.NewUpdateOptions(options...)
-	result, err := m.client.PutSecretValue(ctx, &secretsmanager.PutSecretValueInput{
-		SecretId:     aws.String(name),
-		SecretBinary: value,
-	})
+	input := &secretsmanager.PutSecretValueInput{
+		SecretId: aws.String(name),
+	}
+	if utf8.Valid(value) {
+		input.SecretString = aws.String(string(value))
+	} else {
+		input.SecretBinary = value
+	}
+	result, err := m.client.PutSecretValue(ctx, input)
 	if err != nil {
 		return secret.Info{}, convertError(err)
 	}
