@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -321,6 +322,13 @@ func handleGET(w http.ResponseWriter, r *http.Request, b storage.Bucket, h *Hand
 					writeError(w, presignErr)
 					return
 				}
+				// For file:// URLs, serve the content directly since HTTP clients
+				// cannot follow redirects to file:// URLs.
+				if strings.HasPrefix(presignedURL, "file://") {
+					filePath := strings.TrimPrefix(presignedURL, "file://")
+					serveLocalFile(w, r, filePath, httpRange)
+					return
+				}
 				w.Header().Set("Location", presignedURL)
 				w.WriteHeader(http.StatusTemporaryRedirect)
 				return
@@ -632,5 +640,50 @@ func mapErrorToS3(err error) (string, int) {
 		return "AccessDenied", http.StatusForbidden
 	default:
 		return "InternalError", http.StatusInternalServerError
+	}
+}
+
+func serveLocalFile(w http.ResponseWriter, r *http.Request, filePath string, httpRange *bytesRange) {
+	f, err := os.Open(filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			writeS3Error(w, "NoSuchKey", "The specified key does not exist.", filePath, http.StatusNotFound)
+		} else {
+			writeS3Error(w, "InternalError", err.Error(), filePath, http.StatusInternalServerError)
+		}
+		return
+	}
+	defer f.Close()
+
+	stat, err := f.Stat()
+	if err != nil {
+		writeS3Error(w, "InternalError", err.Error(), filePath, http.StatusInternalServerError)
+		return
+	}
+
+	size := stat.Size()
+	header := w.Header()
+
+	if httpRange != nil {
+		start, end := httpRange.start, httpRange.end
+		if end == 0 || end > size {
+			end = size
+		}
+		if start >= size {
+			writeS3Error(w, "InvalidRange", "The requested range is not satisfiable", filePath, http.StatusRequestedRangeNotSatisfiable)
+			return
+		}
+		if _, err := f.Seek(start, io.SeekStart); err != nil {
+			writeS3Error(w, "InternalError", err.Error(), filePath, http.StatusInternalServerError)
+			return
+		}
+		setContentLength(header, end-start)
+		setContentRange(header, httpRange.ContentRange(size))
+		w.WriteHeader(http.StatusPartialContent)
+		io.CopyN(w, f, end-start)
+	} else {
+		setContentLength(header, size)
+		w.WriteHeader(http.StatusOK)
+		io.Copy(w, f)
 	}
 }
