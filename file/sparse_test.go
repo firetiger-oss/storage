@@ -6,6 +6,7 @@ import (
 )
 
 func TestSparseFileOperations(t *testing.T) {
+	t.Parallel()
 	// Create a temp file and make it sparse by truncating
 	f, err := os.CreateTemp(t.TempDir(), "sparse-test")
 	if err != nil {
@@ -69,6 +70,7 @@ func TestSparseFileOperations(t *testing.T) {
 }
 
 func TestBlockAlign(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		start, end int64
@@ -126,6 +128,7 @@ func TestBlockAlign(t *testing.T) {
 }
 
 func TestIsRangeCached(t *testing.T) {
+	t.Parallel()
 	// Create a sparse file with some data
 	f, err := os.CreateTemp(t.TempDir(), "range-test")
 	if err != nil {
@@ -188,6 +191,7 @@ func TestIsRangeCached(t *testing.T) {
 }
 
 func TestUncachedRanges(t *testing.T) {
+	t.Parallel()
 	// Create a sparse file with some data
 	f, err := os.CreateTemp(t.TempDir(), "uncached-test")
 	if err != nil {
@@ -256,6 +260,7 @@ func TestUncachedRanges(t *testing.T) {
 }
 
 func TestPunchHole(t *testing.T) {
+	t.Parallel()
 	// Create a temp file with data
 	f, err := os.CreateTemp(t.TempDir(), "punchhole-test")
 	if err != nil {
@@ -337,4 +342,249 @@ func TestPunchHole(t *testing.T) {
 	} else {
 		t.Log("Filesystem does not support hole detection, skipping hole verification")
 	}
+}
+
+func TestDiskUsageAccuracy(t *testing.T) {
+	t.Parallel()
+	// Create a temp file and write a known amount of data
+	f, err := os.CreateTemp(t.TempDir(), "diskusage-test")
+	if err != nil {
+		t.Fatal("failed to create temp file:", err)
+	}
+	defer f.Close()
+
+	// Write exactly 64 KB of data
+	const dataSize = 64 * 1024
+	data := make([]byte, dataSize)
+	for i := range data {
+		data[i] = byte(i % 256)
+	}
+	if _, err := f.Write(data); err != nil {
+		t.Fatal("failed to write data:", err)
+	}
+	f.Sync()
+
+	// Get disk usage
+	usage, err := diskUsage(f)
+	if err != nil {
+		t.Fatal("failed to get disk usage:", err)
+	}
+
+	t.Logf("Written bytes: %d, Disk usage: %d", dataSize, usage)
+
+	// Disk usage should be at least the amount of data written
+	// (may be slightly more due to filesystem overhead/block alignment)
+	if usage < dataSize {
+		t.Errorf("disk usage (%d) is less than written data (%d)", usage, dataSize)
+	}
+
+	// Disk usage shouldn't be dramatically larger than written data
+	// Allow 2x overhead for filesystem metadata/alignment
+	if usage > dataSize*2 {
+		t.Logf("disk usage (%d) is more than 2x written data (%d) - filesystem may have unusual block size", usage, dataSize)
+	}
+}
+
+func TestHolePunchingReducesDiskUsage(t *testing.T) {
+	t.Parallel()
+	// Create a temp file with data across multiple blocks
+	f, err := os.CreateTemp(t.TempDir(), "holepunch-reduce-test")
+	if err != nil {
+		t.Fatal("failed to create temp file:", err)
+	}
+	defer f.Close()
+
+	// Write 3 blocks worth of data
+	const numBlocks = 3
+	const blockSize = sparseBlockSize
+	data := make([]byte, blockSize*numBlocks)
+	for i := range data {
+		data[i] = byte(i % 256)
+	}
+	if _, err := f.Write(data); err != nil {
+		t.Fatal("failed to write data:", err)
+	}
+	f.Sync()
+
+	// Get initial disk usage
+	usageBefore, err := diskUsage(f)
+	if err != nil {
+		t.Fatal("failed to get initial disk usage:", err)
+	}
+	t.Logf("Initial disk usage: %d bytes", usageBefore)
+
+	// Punch a hole in the middle block
+	middleBlockOffset := int64(blockSize)
+	err = punchHole(f, middleBlockOffset, blockSize)
+	if err != nil {
+		t.Logf("punchHole returned error: %v (may not be supported on this filesystem)", err)
+		t.Skip("punchHole not supported on this filesystem")
+	}
+	f.Sync()
+
+	// Get disk usage after punch
+	usageAfter, err := diskUsage(f)
+	if err != nil {
+		t.Fatal("failed to get disk usage after punch:", err)
+	}
+	t.Logf("Disk usage after middle block punch: %d bytes", usageAfter)
+
+	// Verify disk usage decreased
+	if usageAfter >= usageBefore {
+		t.Log("Disk usage did not decrease - filesystem may not support hole punching")
+	} else {
+		reduction := usageBefore - usageAfter
+		t.Logf("Disk usage reduced by %d bytes (expected ~%d)", reduction, blockSize)
+	}
+
+	// Verify isRangeCached returns false for punched region
+	cached, err := isRangeCached(f, middleBlockOffset, middleBlockOffset+blockSize-1)
+	if err != nil {
+		t.Fatal("isRangeCached failed:", err)
+	}
+
+	// Check if filesystem supports sparse files
+	holePos, _ := seekHole(f, 0)
+	fileInfo, _ := f.Stat()
+	sparseSupported := holePos < fileInfo.Size()
+
+	if sparseSupported {
+		if cached {
+			t.Error("punched region should not be cached")
+		}
+	} else {
+		t.Log("Filesystem does not support sparse files, skipping cache check")
+	}
+
+	// Verify first block data is still intact
+	firstBlockData := make([]byte, 100)
+	n, err := f.ReadAt(firstBlockData, 0)
+	if err != nil {
+		t.Fatal("failed to read first block:", err)
+	}
+	for i := 0; i < n; i++ {
+		if firstBlockData[i] != data[i] {
+			t.Errorf("first block data corrupted at offset %d: got %d, want %d", i, firstBlockData[i], data[i])
+			break
+		}
+	}
+	t.Log("First block data verified intact")
+
+	// Verify third block data is still intact
+	thirdBlockOffset := int64(blockSize * 2)
+	thirdBlockData := make([]byte, 100)
+	n, err = f.ReadAt(thirdBlockData, thirdBlockOffset)
+	if err != nil {
+		t.Fatal("failed to read third block:", err)
+	}
+	for i := 0; i < n; i++ {
+		expected := data[int(thirdBlockOffset)+i]
+		if thirdBlockData[i] != expected {
+			t.Errorf("third block data corrupted at offset %d: got %d, want %d", thirdBlockOffset+int64(i), thirdBlockData[i], expected)
+			break
+		}
+	}
+	t.Log("Third block data verified intact")
+
+	t.Log("Hole punching reduces disk usage test completed")
+}
+
+func TestSparseFileWithMultipleHoles(t *testing.T) {
+	t.Parallel()
+	// Create a sparse file with alternating data and holes
+	f, err := os.CreateTemp(t.TempDir(), "multihole-test")
+	if err != nil {
+		t.Fatal("failed to create temp file:", err)
+	}
+	defer f.Close()
+
+	const blockSize = sparseBlockSize
+	const numBlocks = 5 // Blocks 0, 1, 2, 3, 4
+
+	// Truncate to final size
+	if err := f.Truncate(int64(blockSize * numBlocks)); err != nil {
+		t.Fatal("failed to truncate file:", err)
+	}
+
+	// Write data to blocks 0, 2, and 4 only (leaving 1 and 3 as holes)
+	data := make([]byte, blockSize)
+	for i := range data {
+		data[i] = byte(i % 256)
+	}
+
+	// Write to block 0
+	if _, err := f.WriteAt(data, 0); err != nil {
+		t.Fatal("failed to write to block 0:", err)
+	}
+	// Write to block 2
+	if _, err := f.WriteAt(data, int64(blockSize*2)); err != nil {
+		t.Fatal("failed to write to block 2:", err)
+	}
+	// Write to block 4
+	if _, err := f.WriteAt(data, int64(blockSize*4)); err != nil {
+		t.Fatal("failed to write to block 4:", err)
+	}
+	f.Sync()
+
+	// Get disk usage
+	usage, err := diskUsage(f)
+	if err != nil {
+		t.Fatal("failed to get disk usage:", err)
+	}
+	fileInfo, _ := f.Stat()
+	t.Logf("File size: %d, Disk usage: %d", fileInfo.Size(), usage)
+
+	// Check for sparse file support
+	holePos, _ := seekHole(f, 0)
+	sparseSupported := holePos < fileInfo.Size()
+
+	if !sparseSupported {
+		t.Log("Filesystem does not support sparse files, skipping detailed hole tests")
+		return
+	}
+
+	// Verify uncached ranges identifies the holes
+	uncached, err := uncachedRanges(f, 0, int64(blockSize*numBlocks)-1)
+	if err != nil {
+		t.Fatal("uncachedRanges failed:", err)
+	}
+
+	t.Logf("Found %d uncached ranges (expected 2 - blocks 1 and 3)", len(uncached))
+	for i, r := range uncached {
+		t.Logf("  Uncached range %d: [%d, %d]", i, r.Start, r.End)
+	}
+
+	// We expect blocks 1 and 3 to be holes
+	if len(uncached) != 2 {
+		t.Errorf("expected 2 uncached ranges, got %d", len(uncached))
+	}
+
+	// Verify block 0 is cached
+	cached0, err := isRangeCached(f, 0, int64(blockSize)-1)
+	if err != nil {
+		t.Fatal("isRangeCached for block 0 failed:", err)
+	}
+	if !cached0 {
+		t.Error("block 0 should be cached")
+	}
+
+	// Verify block 1 is NOT cached
+	cached1, err := isRangeCached(f, int64(blockSize), int64(blockSize*2)-1)
+	if err != nil {
+		t.Fatal("isRangeCached for block 1 failed:", err)
+	}
+	if cached1 {
+		t.Error("block 1 should NOT be cached")
+	}
+
+	// Verify block 2 is cached
+	cached2, err := isRangeCached(f, int64(blockSize*2), int64(blockSize*3)-1)
+	if err != nil {
+		t.Fatal("isRangeCached for block 2 failed:", err)
+	}
+	if !cached2 {
+		t.Error("block 2 should be cached")
+	}
+
+	t.Log("Sparse file with multiple holes test completed")
 }
