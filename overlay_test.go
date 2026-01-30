@@ -136,6 +136,50 @@ func TestOverlay(t *testing.T) {
 		}
 	})
 
+	t.Run("DeleteObject should hide read layer objects (whiteout)", func(t *testing.T) {
+		// KNOWN LIMITATION: This test documents the desired behavior that is not yet
+		// implemented. Deleting an object that exists in the read layer should make it
+		// invisible through the overlay, but currently it "reappears" because we don't
+		// track deletions with whiteout markers.
+		//
+		// To implement this properly, we need whiteout files (like OCI/Docker image layers).
+		// See the comment on overlayBucket.DeleteObject for the implementation plan.
+		t.Skip("whiteout support not implemented - see overlay.go DeleteObject comment for plan")
+
+		ctx := t.Context()
+		writeLayer := memory.NewBucket()
+		readLayer := memory.NewBucket(&memory.Entry{Key: "test.txt", Value: []byte("read-layer")})
+		bucket := storage.Overlay(writeLayer, readLayer)
+
+		// Object should be visible from read layer initially
+		if _, err := bucket.HeadObject(ctx, "test.txt"); err != nil {
+			t.Fatalf("expected object to be visible initially: %v", err)
+		}
+
+		// Delete should logically remove it from the overlay's view
+		if err := bucket.DeleteObject(ctx, "test.txt"); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		// After delete, object should NOT be visible through the overlay
+		// (currently fails: object "reappears" from read layer)
+		_, err := bucket.HeadObject(ctx, "test.txt")
+		if err == nil {
+			t.Error("expected object to be hidden after delete, but it reappeared from read layer")
+		}
+
+		// ListObjects should also not include the deleted key
+		objects, err := sequtil.Collect(bucket.ListObjects(ctx))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		for _, obj := range objects {
+			if obj.Key == "test.txt" {
+				t.Error("expected deleted object to not appear in listing")
+			}
+		}
+	})
+
 	t.Run("ListObjects merges in sorted order with deduplication", func(t *testing.T) {
 		ctx := t.Context()
 		writeLayer := memory.NewBucket(

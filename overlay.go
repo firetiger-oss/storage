@@ -67,6 +67,29 @@ func (o *overlayBucket) CopyObject(ctx context.Context, from, to string, options
 	return copyObjectStreaming(ctx, o, from, o, to, options...)
 }
 
+// DeleteObject deletes the object from the write layer only.
+//
+// KNOWN LIMITATION: If the object exists in the read layer, it will "reappear"
+// after deletion because this implementation does not track deletions. To properly
+// support deletes, we would need to implement "whiteout" files (similar to OCI/Docker
+// image layers) that mark a key as deleted. A whiteout file would be a marker object
+// (e.g., ".wh.{key}") in the write layer that indicates the key should be treated as
+// deleted even if it exists in the read layer.
+//
+// Implementation sketch for whiteout support:
+//   - DeleteObject: write a whiteout marker ".wh.{key}" to the write layer
+//   - HeadObject/GetObject: check for whiteout marker before falling back to read layer
+//   - ListObjects: filter out keys that have whiteout markers, filter out whiteout files themselves
+//   - PutObject: delete any existing whiteout marker for the key
+//   - DeleteObjects: same as DeleteObject but batched
+//
+// Edge cases to consider:
+//   - Deleting a key that only exists in write layer (no whiteout needed)
+//   - Deleting a key that only exists in read layer (whiteout needed)
+//   - Deleting a key that exists in both layers (whiteout needed after write layer delete)
+//   - Re-creating a key after deletion (must remove whiteout)
+//   - Listing should not expose whiteout files to callers
+//   - Prefix handling: ".wh." prefix could conflict with user keys
 func (o *overlayBucket) DeleteObject(ctx context.Context, key string) error {
 	return o.writeLayer.DeleteObject(ctx, key)
 }
