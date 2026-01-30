@@ -25,7 +25,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"iter"
 	"net/http"
 	"time"
@@ -139,14 +138,8 @@ func NewQueuesHandler(objectHandler notification.ObjectHandler) http.Handler {
 			return
 		}
 
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			http.Error(w, "failed to read request body", http.StatusBadRequest)
-			return
-		}
-
 		var event R2Event
-		if err := json.Unmarshal(body, &event); err != nil {
+		if err := json.NewDecoder(r.Body).Decode(&event); err != nil {
 			http.Error(w, "failed to parse event: "+err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -190,7 +183,6 @@ func NewBatchQueuesHandler(objectHandler notification.ObjectHandler) http.Handle
 // decodeEventArray streams R2Event objects from a JSON array using a decoder.
 func decodeEventArray(dec *json.Decoder) iter.Seq2[R2Event, error] {
 	return func(yield func(R2Event, error) bool) {
-		// Read opening bracket
 		token, err := dec.Token()
 		if err != nil {
 			yield(R2Event{}, fmt.Errorf("failed to read opening bracket: %w", err))
@@ -201,7 +193,6 @@ func decodeEventArray(dec *json.Decoder) iter.Seq2[R2Event, error] {
 			return
 		}
 
-		// Stream each event
 		for dec.More() {
 			var event R2Event
 			if err := dec.Decode(&event); err != nil {
@@ -213,9 +204,13 @@ func decodeEventArray(dec *json.Decoder) iter.Seq2[R2Event, error] {
 			}
 		}
 
-		// Read closing bracket
-		if _, err := dec.Token(); err != nil {
+		token, err = dec.Token()
+		if err != nil {
 			yield(R2Event{}, fmt.Errorf("failed to read closing bracket: %w", err))
+			return
+		}
+		if delim, ok := token.(json.Delim); !ok || delim != ']' {
+			yield(R2Event{}, fmt.Errorf("expected ']', got %v", token))
 			return
 		}
 	}

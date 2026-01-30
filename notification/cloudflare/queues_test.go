@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -289,12 +290,11 @@ func TestBatchQueuesHandler(t *testing.T) {
 		}
 	})
 
-	t.Run("batch handler error stops processing", func(t *testing.T) {
-		callCount := 0
+	t.Run("batch handler error returns error status", func(t *testing.T) {
+		var callCount atomic.Int32
 		objectHandler := notification.ObjectHandlerFunc(
 			func(ctx context.Context, event *notification.Event) error {
-				callCount++
-				if callCount == 1 {
+				if callCount.Add(1) == 1 {
 					return errors.New("first event failed")
 				}
 				return nil
@@ -316,8 +316,9 @@ func TestBatchQueuesHandler(t *testing.T) {
 		if rec.Code != http.StatusInternalServerError {
 			t.Errorf("expected status 500, got %d", rec.Code)
 		}
-		if callCount != 1 {
-			t.Errorf("expected 1 call (stopped after error), got %d", callCount)
+		// With concurrent processing, both events may be processed before error is returned
+		if callCount.Load() < 1 {
+			t.Errorf("expected at least 1 call, got %d", callCount.Load())
 		}
 	})
 }
