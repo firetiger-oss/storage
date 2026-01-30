@@ -54,7 +54,13 @@ func NewRegistry(options ...RegistryOption) storage.Registry {
 		if opts.httpClient != nil {
 			httpClient = opts.httpClient
 		} else {
-			httpClient = &http.Client{Transport: &http.Transport{}}
+			httpClient = &http.Client{
+				Transport: &http.Transport{
+					MaxIdleConns:        200,
+					MaxIdleConnsPerHost: 100,
+					IdleConnTimeout:     90 * time.Second,
+				},
+			}
 		}
 
 		var err error
