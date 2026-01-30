@@ -14,12 +14,19 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/EmissarySocial/emissary/tools/cacheheader"
 	"github.com/firetiger-oss/storage"
 	"github.com/firetiger-oss/storage/cache/lru"
 )
+
+// isErrNoSpace checks if an error is due to no space left on device (ENOSPC)
+// or disk quota exceeded (EDQUOT).
+func isErrNoSpace(err error) bool {
+	return errors.Is(err, syscall.ENOSPC) || errors.Is(err, syscall.EDQUOT)
+}
 
 type Cache struct {
 	tmpdir string
@@ -168,6 +175,34 @@ func (c *Cache) insert(path string, size int64) {
 			evictedPaths = append(evictedPaths, evictedPath)
 		}
 	}
+}
+
+// evictForSpace performs emergency eviction to free up disk space.
+// It evicts LRU entries until at least targetSize bytes are freed.
+// Returns the total bytes freed.
+func (c *Cache) evictForSpace(targetSize int64) int64 {
+	var evictedPaths []string
+	var freedBytes int64
+
+	defer func() {
+		for _, evictedPath := range evictedPaths {
+			os.Remove(evictedPath)
+		}
+	}()
+
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	for freedBytes < targetSize {
+		evictedPath, _, evictedSize, hasEvicted := c.items.Evict()
+		if !hasEvicted {
+			break
+		}
+		evictedPaths = append(evictedPaths, evictedPath)
+		freedBytes += evictedSize
+	}
+
+	return freedBytes
 }
 
 type cachedBucket struct {
@@ -351,6 +386,13 @@ func (b *cachedBucket) getObjectFromBucket(ctx context.Context, key, filePath st
 	}()
 
 	if _, err := io.Copy(f, body); err != nil {
+		if isErrNoSpace(err) {
+			// Trigger emergency eviction to free disk space for future requests
+			b.evictForSpace(info.Size * 2)
+			// Re-fetch from backend without caching (graceful degradation)
+			// The original body is now consumed/corrupted, so we need a fresh fetch
+			return b.bucket.GetObject(ctx, key)
+		}
 		return nil, info, err
 	}
 	if _, err := f.Seek(0, io.SeekStart); err != nil {
@@ -390,15 +432,35 @@ func (b *cachedBucket) PutObject(ctx context.Context, key string, value io.Reade
 		tmpFile, err = os.CreateTemp(dirPath, tempFilePattern)
 		if err == nil {
 			defer func() {
-				tmpFile.Close()
-				if renameFile {
-					os.Rename(tmpFile.Name(), filePath)
-				} else {
-					os.Remove(tmpFile.Name())
+				if tmpFile != nil {
+					tmpFile.Close()
+					if renameFile {
+						os.Rename(tmpFile.Name(), filePath)
+					} else {
+						os.Remove(tmpFile.Name())
+					}
 				}
 			}()
 
 			if _, err := io.Copy(tmpFile, value); err != nil {
+				if isErrNoSpace(err) {
+					// Get how much was written before ENOSPC
+					written, _ := tmpFile.Seek(0, io.SeekCurrent)
+					// Trigger emergency eviction to free disk space for future requests
+					b.evictForSpace(written * 2)
+					// Seek back to start of temp file to recover data already written
+					if _, seekErr := tmpFile.Seek(0, io.SeekStart); seekErr == nil {
+						// Chain: data in temp file + remaining data in value
+						// This allows the backend upload to succeed without caching
+						// Note: we keep tmpFile open so the defer will close it after putObject
+						recoveryFile := tmpFile
+						value = io.MultiReader(recoveryFile, value)
+						tmpFile = nil // Skip caching, but keep recoveryFile for cleanup
+						defer recoveryFile.Close()
+						defer os.Remove(recoveryFile.Name())
+						goto putObject
+					}
+				}
 				return storage.ObjectInfo{}, err
 			}
 			if _, err := tmpFile.Seek(0, io.SeekStart); err != nil {
@@ -409,6 +471,7 @@ func (b *cachedBucket) PutObject(ctx context.Context, key string, value io.Reade
 		}
 	}
 
+putObject:
 	info, err := b.bucket.PutObject(ctx, key, value, options...)
 	if err != nil {
 		return info, err
