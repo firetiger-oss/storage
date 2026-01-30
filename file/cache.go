@@ -11,9 +11,11 @@ import (
 	"io"
 	"io/fs"
 	"iter"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/EmissarySocial/emissary/tools/cacheheader"
@@ -21,9 +23,16 @@ import (
 	"github.com/firetiger-oss/storage/cache/lru"
 )
 
+// isErrNoSpace checks if an error is due to no space left on device (ENOSPC)
+// or disk quota exceeded (EDQUOT).
+func isErrNoSpace(err error) bool {
+	return errors.Is(err, syscall.ENOSPC) || errors.Is(err, syscall.EDQUOT)
+}
+
 type Cache struct {
 	tmpdir string
 	size   int64
+	log    *slog.Logger
 	init   bool
 	once   sync.Once
 	mutex  sync.Mutex
@@ -31,7 +40,7 @@ type Cache struct {
 }
 
 func NewCache(tmpdir string, size int64) *Cache {
-	return &Cache{tmpdir: tmpdir, size: size}
+	return &Cache{tmpdir: tmpdir, size: size, log: slog.Default()}
 }
 
 // shouldCacheObject determines if an object should be cached based on its cache control headers
@@ -168,6 +177,34 @@ func (c *Cache) insert(path string, size int64) {
 			evictedPaths = append(evictedPaths, evictedPath)
 		}
 	}
+}
+
+// evictForSpace performs emergency eviction to free up disk space.
+// It evicts LRU entries until at least targetSize bytes are freed.
+// Returns the total bytes freed.
+func (c *Cache) evictForSpace(targetSize int64) int64 {
+	var evictedPaths []string
+	var freedBytes int64
+
+	defer func() {
+		for _, evictedPath := range evictedPaths {
+			os.Remove(evictedPath)
+		}
+	}()
+
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	for freedBytes < targetSize {
+		evictedPath, _, evictedSize, hasEvicted := c.items.Evict()
+		if !hasEvicted {
+			break
+		}
+		evictedPaths = append(evictedPaths, evictedPath)
+		freedBytes += evictedSize
+	}
+
+	return freedBytes
 }
 
 type cachedBucket struct {
@@ -351,16 +388,26 @@ func (b *cachedBucket) getObjectFromBucket(ctx context.Context, key, filePath st
 	}()
 
 	if _, err := io.Copy(f, body); err != nil {
-		return nil, info, err
+		b.log.WarnContext(ctx, "cache: failed to write object", "key", key, "error", err)
+		if isErrNoSpace(err) {
+			// Trigger emergency eviction to free disk space for future requests
+			b.evictForSpace(info.Size * 2)
+		}
+		// Re-fetch from backend without caching (graceful degradation)
+		// The original body is now consumed/corrupted, so we need a fresh fetch
+		return b.bucket.GetObject(ctx, key)
 	}
 	if _, err := f.Seek(0, io.SeekStart); err != nil {
-		return nil, info, err
+		b.log.WarnContext(ctx, "cache: failed to seek", "key", key, "error", err)
+		return b.bucket.GetObject(ctx, key)
 	}
 	if err := os.Chtimes(f.Name(), info.LastModified, info.LastModified); err != nil {
-		return nil, info, err
+		b.log.WarnContext(ctx, "cache: failed to set mtime", "key", key, "error", err)
+		return b.bucket.GetObject(ctx, key)
 	}
 	if err := writeObjectInfo(f, info); err != nil {
-		return nil, info, err
+		b.log.WarnContext(ctx, "cache: failed to write metadata", "key", key, "error", err)
+		return b.bucket.GetObject(ctx, key)
 	}
 
 	body = io.ReadCloser(f)
@@ -390,25 +437,56 @@ func (b *cachedBucket) PutObject(ctx context.Context, key string, value io.Reade
 		tmpFile, err = os.CreateTemp(dirPath, tempFilePattern)
 		if err == nil {
 			defer func() {
-				tmpFile.Close()
-				if renameFile {
-					os.Rename(tmpFile.Name(), filePath)
-				} else {
-					os.Remove(tmpFile.Name())
+				if tmpFile != nil {
+					tmpFile.Close()
+					if renameFile {
+						os.Rename(tmpFile.Name(), filePath)
+					} else {
+						os.Remove(tmpFile.Name())
+					}
 				}
 			}()
 
 			if _, err := io.Copy(tmpFile, value); err != nil {
-				return storage.ObjectInfo{}, err
+				b.log.WarnContext(ctx, "cache: failed to buffer object", "key", key, "error", err)
+				// Get how much was written before the error
+				written, _ := tmpFile.Seek(0, io.SeekCurrent)
+				if isErrNoSpace(err) {
+					// Trigger emergency eviction to free disk space for future requests
+					b.evictForSpace(written * 2)
+				}
+				// Seek back to start of temp file to recover data already written
+				if _, seekErr := tmpFile.Seek(0, io.SeekStart); seekErr == nil {
+					// Chain: data in temp file + remaining data in value
+					// This allows the backend upload to succeed without caching
+					// Note: we keep tmpFile open so the defer will close it after putObject
+					recoveryFile := tmpFile
+					value = io.MultiReader(recoveryFile, value)
+					tmpFile = nil // Skip caching, but keep recoveryFile for cleanup
+					defer recoveryFile.Close()
+					defer os.Remove(recoveryFile.Name())
+					goto putObject
+				}
+				// Can't recover - skip caching entirely
+				tmpFile.Close()
+				os.Remove(tmpFile.Name())
+				tmpFile = nil
+				goto putObject
 			}
 			if _, err := tmpFile.Seek(0, io.SeekStart); err != nil {
-				return storage.ObjectInfo{}, err
+				b.log.WarnContext(ctx, "cache: failed to seek", "key", key, "error", err)
+				// Can't recover - skip caching entirely
+				tmpFile.Close()
+				os.Remove(tmpFile.Name())
+				tmpFile = nil
+				goto putObject
 			}
 
 			value = tmpFile
 		}
 	}
 
+putObject:
 	info, err := b.bucket.PutObject(ctx, key, value, options...)
 	if err != nil {
 		return info, err
@@ -417,15 +495,17 @@ func (b *cachedBucket) PutObject(ctx context.Context, key string, value io.Reade
 	// Only cache the object if it should be cached based on cache control headers
 	if tmpFile != nil && shouldCacheObject(info) {
 		if err := os.Chtimes(tmpFile.Name(), info.LastModified, info.LastModified); err != nil {
+			b.log.WarnContext(ctx, "cache: failed to set mtime", "key", key, "error", err)
 			return info, nil
 		}
 		if err := writeObjectInfo(tmpFile, info); err != nil {
+			b.log.WarnContext(ctx, "cache: failed to write metadata", "key", key, "error", err)
 			return info, nil
 		}
 		b.insert(filePath, info.Size)
 		renameFile = true
 	}
-	return info, err
+	return info, nil
 }
 
 func (b *cachedBucket) DeleteObject(ctx context.Context, key string) error {
