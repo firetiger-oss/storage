@@ -12,8 +12,9 @@ type Option func(*Options)
 
 // Options contains configuration for an ObjectHandler.
 type Options struct {
-	registry storage.Registry
-	filters  []Filter
+	registry              storage.Registry
+	filters               []Filter
+	deleteAfterProcessing bool
 }
 
 // Registry returns the storage registry to use for loading buckets.
@@ -28,6 +29,11 @@ func (o *Options) Registry() storage.Registry {
 // Filters returns the list of filters to apply before processing events.
 func (o *Options) Filters() []Filter {
 	return o.filters
+}
+
+// DeleteAfterProcessing returns whether to delete objects after successful processing.
+func (o *Options) DeleteAfterProcessing() bool {
+	return o.deleteAfterProcessing
 }
 
 // NewOptions creates Options from a variadic list of Option functions.
@@ -57,5 +63,14 @@ func WithRegistry(registry storage.Registry) Option {
 func WithFilter(filter Filter) Option {
 	return func(o *Options) {
 		o.filters = append(o.filters, filter)
+	}
+}
+
+// WithDeleteAfterProcessing controls automatic deletion of objects after
+// successful processing. Only applies to ObjectCreated events.
+// Object deletion failures are logged but do not fail the request.
+func WithDeleteAfterProcessing(enabled bool) Option {
+	return func(o *Options) {
+		o.deleteAfterProcessing = enabled
 	}
 }

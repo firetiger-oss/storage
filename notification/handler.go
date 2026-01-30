@@ -3,6 +3,7 @@ package notification
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -27,10 +28,21 @@ import (
 func NewObjectHandler(handler http.Handler, options ...Option) ObjectHandler {
 	opts := NewOptions(options...)
 	return &objectHandler{
-		handler:  handler,
-		registry: opts.Registry(),
-		filters:  opts.Filters(),
+		handler:               handler,
+		registry:              opts.Registry(),
+		filters:               opts.Filters(),
+		deleteAfterProcessing: opts.DeleteAfterProcessing(),
 	}
+}
+
+// NewObjectConsumer creates an ObjectHandler that processes and then deletes
+// objects after successful handling. This is a convenience wrapper around
+// NewObjectHandler with WithDeleteAfterProcessing(true).
+//
+// Use this when objects should be consumed (processed once and deleted), such as
+// when processing files uploaded to a staging bucket for ingestion.
+func NewObjectConsumer(handler http.Handler, options ...Option) ObjectHandler {
+	return NewObjectHandler(handler, append(options, WithDeleteAfterProcessing(true))...)
 }
 
 // NewObjectHandlerFrom creates an ObjectHandler that dispatches events to the given
@@ -43,9 +55,10 @@ func NewObjectHandlerFrom(registry storage.Registry, handler http.Handler) Objec
 }
 
 type objectHandler struct {
-	handler  http.Handler
-	registry storage.Registry
-	filters  []Filter
+	handler               http.Handler
+	registry              storage.Registry
+	filters               []Filter
+	deleteAfterProcessing bool
 }
 
 func (h *objectHandler) HandleEvent(ctx context.Context, event *Event) error {
@@ -140,6 +153,15 @@ func (h *objectHandler) handleCreate(ctx context.Context, event *Event) error {
 
 	if w.statusCode >= 400 {
 		return fmt.Errorf("%w: status %d", ErrHandlerFailed, w.statusCode)
+	}
+
+	if h.deleteAfterProcessing {
+		if err := bucket.DeleteObject(ctx, event.Key); err != nil {
+			slog.ErrorContext(ctx, "failed to delete object after processing",
+				"bucket", event.Bucket,
+				"key", event.Key,
+				"error", err)
+		}
 	}
 
 	return nil
