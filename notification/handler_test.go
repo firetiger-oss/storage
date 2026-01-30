@@ -2,6 +2,7 @@ package notification_test
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -239,5 +240,124 @@ func TestObjectHandlerEventHeaders(t *testing.T) {
 	if headers.Get("X-Amz-Meta-custom-key") != "custom-value" {
 		t.Errorf("expected X-Amz-Meta-custom-key custom-value, got %s",
 			headers.Get("X-Amz-Meta-custom-key"))
+	}
+}
+
+func TestObjectHandlerDeleteAfterProcessing(t *testing.T) {
+	bucket := memory.NewBucket(&memory.Entry{
+		Key:   "test/file.txt",
+		Value: []byte("test content"),
+	})
+	registry := storage.RegistryFunc(func(ctx context.Context, uri string) (storage.Bucket, error) {
+		return bucket, nil
+	})
+
+	handlerCalled := false
+	httpHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handlerCalled = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	handler := notification.NewObjectHandler(httpHandler,
+		notification.WithRegistry(registry),
+		notification.WithDeleteAfterProcessing(true),
+	)
+
+	event := &notification.Event{
+		Type:   notification.ObjectCreated,
+		Bucket: "test-bucket",
+		Key:    "test/file.txt",
+		Source: "aws:s3",
+	}
+
+	err := handler.HandleEvent(t.Context(), event)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !handlerCalled {
+		t.Error("handler was not called")
+	}
+
+	_, _, err = bucket.GetObject(t.Context(), "test/file.txt")
+	if !errors.Is(err, storage.ErrObjectNotFound) {
+		t.Errorf("expected object to be deleted, got error: %v", err)
+	}
+}
+
+func TestObjectConsumer(t *testing.T) {
+	bucket := memory.NewBucket(&memory.Entry{
+		Key:   "consume/data.json",
+		Value: []byte(`{"data":"value"}`),
+	})
+	registry := storage.RegistryFunc(func(ctx context.Context, uri string) (storage.Bucket, error) {
+		return bucket, nil
+	})
+
+	var receivedBody []byte
+	httpHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedBody, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	})
+
+	handler := notification.NewObjectConsumer(httpHandler,
+		notification.WithRegistry(registry),
+	)
+
+	event := &notification.Event{
+		Type:   notification.ObjectCreated,
+		Bucket: "test-bucket",
+		Key:    "consume/data.json",
+		Source: "aws:s3",
+	}
+
+	err := handler.HandleEvent(t.Context(), event)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if string(receivedBody) != `{"data":"value"}` {
+		t.Errorf("expected body {\"data\":\"value\"}, got %s", string(receivedBody))
+	}
+
+	_, _, err = bucket.GetObject(t.Context(), "consume/data.json")
+	if !errors.Is(err, storage.ErrObjectNotFound) {
+		t.Errorf("expected object to be deleted after consumption, got error: %v", err)
+	}
+}
+
+func TestObjectHandlerDeleteAfterProcessingOnlyOnSuccess(t *testing.T) {
+	bucket := memory.NewBucket(&memory.Entry{
+		Key:   "test/file.txt",
+		Value: []byte("test content"),
+	})
+	registry := storage.RegistryFunc(func(ctx context.Context, uri string) (storage.Bucket, error) {
+		return bucket, nil
+	})
+
+	httpHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "processing failed", http.StatusInternalServerError)
+	})
+
+	handler := notification.NewObjectHandler(httpHandler,
+		notification.WithRegistry(registry),
+		notification.WithDeleteAfterProcessing(true),
+	)
+
+	event := &notification.Event{
+		Type:   notification.ObjectCreated,
+		Bucket: "test-bucket",
+		Key:    "test/file.txt",
+		Source: "aws:s3",
+	}
+
+	err := handler.HandleEvent(t.Context(), event)
+	if err == nil {
+		t.Fatal("expected error for handler failure")
+	}
+
+	_, _, getErr := bucket.GetObject(t.Context(), "test/file.txt")
+	if getErr != nil {
+		t.Errorf("expected object to NOT be deleted after failed processing, got error: %v", getErr)
 	}
 }
