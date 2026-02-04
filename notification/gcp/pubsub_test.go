@@ -14,6 +14,7 @@ import (
 	"github.com/firetiger-oss/storage/memory"
 	"github.com/firetiger-oss/storage/notification"
 	"github.com/firetiger-oss/storage/notification/gcp"
+	"github.com/firetiger-oss/storage/uri"
 )
 
 func TestBucketNotificationHandlerObjectFinalize(t *testing.T) {
@@ -45,14 +46,9 @@ func TestBucketNotificationHandlerObjectFinalize(t *testing.T) {
 	if receivedEvent.Type != notification.ObjectCreated {
 		t.Errorf("expected type ObjectCreated, got %s", receivedEvent.Type)
 	}
-	if receivedEvent.Bucket != "my-gcs-bucket" {
-		t.Errorf("expected bucket my-gcs-bucket, got %s", receivedEvent.Bucket)
-	}
-	if receivedEvent.Key != "path/to/file.json" {
-		t.Errorf("expected key path/to/file.json, got %s", receivedEvent.Key)
-	}
-	if receivedEvent.Source != "gcp:storage" {
-		t.Errorf("expected source gcp:storage, got %s", receivedEvent.Source)
+	expectedObject := uri.Join("gs", "my-gcs-bucket", "path/to/file.json")
+	if receivedEvent.Object != expectedObject {
+		t.Errorf("expected object %s, got %s", expectedObject, receivedEvent.Object)
 	}
 }
 

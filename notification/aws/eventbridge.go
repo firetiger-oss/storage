@@ -11,6 +11,7 @@ import (
 
 	"github.com/firetiger-oss/storage/concurrent"
 	"github.com/firetiger-oss/storage/notification"
+	"github.com/firetiger-oss/storage/uri"
 )
 
 // EventBridgeEvent represents an AWS EventBridge event envelope.
@@ -67,11 +68,9 @@ func NewS3EventHandler(objectHandler notification.ObjectHandler) *S3EventHandler
 func (h *S3EventHandler) Handle(ctx context.Context, event EventBridgeEvent[S3EventDetail]) error {
 	// Convert to unified event format
 	unified := notification.Event{
-		Bucket: event.Detail.Bucket.Name,
-		Key:    event.Detail.Object.Key,
+		Object: uri.Join("s3", event.Detail.Bucket.Name, event.Detail.Object.Key),
 		Size:   event.Detail.Object.Size,
 		ETag:   event.Detail.Object.ETag,
-		Source: "aws:s3",
 		Region: event.Region,
 	}
 
@@ -214,11 +213,9 @@ func (h *S3LambdaHandler) HandleEvent(ctx context.Context, event S3Event) error 
 func (h *S3LambdaHandler) HandleRecord(ctx context.Context, record S3EventRecord) error {
 	// Convert to unified event format
 	unified := notification.Event{
-		Bucket: record.S3.Bucket.Name,
-		Key:    record.S3.Object.Key,
+		Object: uri.Join("s3", record.S3.Bucket.Name, record.S3.Object.Key),
 		Size:   record.S3.Object.Size,
 		ETag:   record.S3.Object.ETag,
-		Source: "aws:s3",
 		Region: record.AWSRegion,
 		Time:   record.EventTime,
 	}

@@ -5,6 +5,8 @@ import (
 	"path"
 	"slices"
 	"strings"
+
+	"github.com/firetiger-oss/storage/uri"
 )
 
 // Filter examines an event and returns whether to continue processing.
@@ -14,14 +16,16 @@ type Filter func(ctx context.Context, event *Event) (bool, error)
 // FilterPrefix returns a filter that accepts events with keys starting with prefix.
 func FilterPrefix(prefix string) Filter {
 	return func(ctx context.Context, event *Event) (bool, error) {
-		return strings.HasPrefix(event.Key, prefix), nil
+		_, _, key := uri.Split(event.Object)
+		return strings.HasPrefix(key, prefix), nil
 	}
 }
 
 // FilterGlob returns a filter that accepts events with keys matching the glob pattern.
 func FilterGlob(pattern string) Filter {
 	return func(ctx context.Context, event *Event) (bool, error) {
-		return path.Match(pattern, event.Key)
+		_, _, key := uri.Split(event.Object)
+		return path.Match(pattern, key)
 	}
 }
 

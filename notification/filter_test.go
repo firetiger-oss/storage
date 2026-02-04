@@ -11,6 +11,7 @@ import (
 	"github.com/firetiger-oss/storage"
 	"github.com/firetiger-oss/storage/memory"
 	"github.com/firetiger-oss/storage/notification"
+	"github.com/firetiger-oss/storage/uri"
 )
 
 func TestFilterPrefix(t *testing.T) {
@@ -28,7 +29,7 @@ func TestFilterPrefix(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.key, func(t *testing.T) {
-			event := notification.Event{Key: tt.key}
+			event := notification.Event{Object: uri.Join("s3", "bucket", tt.key)}
 			ok, err := filter(context.Background(), &event)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
@@ -55,7 +56,7 @@ func TestFilterGlob(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.key, func(t *testing.T) {
-			event := notification.Event{Key: tt.key}
+			event := notification.Event{Object: uri.Join("s3", "bucket", tt.key)}
 			ok, err := filter(context.Background(), &event)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
@@ -69,7 +70,7 @@ func TestFilterGlob(t *testing.T) {
 
 func TestFilterGlobInvalidPattern(t *testing.T) {
 	filter := notification.FilterGlob("[invalid")
-	event := notification.Event{Key: "test.txt"}
+	event := notification.Event{Object: uri.Join("s3", "bucket", "test.txt")}
 
 	_, err := filter(context.Background(), &event)
 	if err == nil {
@@ -153,9 +154,7 @@ func TestObjectHandlerWithFilterSkipped(t *testing.T) {
 
 	event := notification.Event{
 		Type:   notification.ObjectCreated,
-		Bucket: "test-bucket",
-		Key:    "other/file.txt", // Does NOT match filter
-		Source: "aws:s3",
+		Object: uri.Join("s3", "test-bucket", "other/file.txt"), // Does NOT match filter
 	}
 
 	err := objectHandler.HandleEvent(context.Background(), &event)
@@ -198,9 +197,7 @@ func TestObjectHandlerWithFilterPassed(t *testing.T) {
 
 	event := notification.Event{
 		Type:   notification.ObjectCreated,
-		Bucket: "test-bucket",
-		Key:    "sessions/data.json", // Matches filter
-		Source: "aws:s3",
+		Object: uri.Join("s3", "test-bucket", "sessions/data.json"), // Matches filter
 	}
 
 	err = objectHandler.HandleEvent(context.Background(), &event)
@@ -216,7 +213,7 @@ func TestObjectHandlerWithFilterPassed(t *testing.T) {
 func TestObjectHandlerMultipleFilters(t *testing.T) {
 	bucket := memory.NewBucket()
 
-	registry := storage.RegistryFunc(func(ctx context.Context, uri string) (storage.Bucket, error) {
+	registry := storage.RegistryFunc(func(ctx context.Context, u string) (storage.Bucket, error) {
 		return bucket, nil
 	})
 
@@ -236,9 +233,7 @@ func TestObjectHandlerMultipleFilters(t *testing.T) {
 	// Test 1: Fails first filter (wrong event type)
 	event := notification.Event{
 		Type:   notification.ObjectDeleted,
-		Bucket: "test-bucket",
-		Key:    "sessions/data.json",
-		Source: "aws:s3",
+		Object: uri.Join("s3", "test-bucket", "sessions/data.json"),
 	}
 	err := objectHandler.HandleEvent(context.Background(), &event)
 	if err != nil {
@@ -252,9 +247,7 @@ func TestObjectHandlerMultipleFilters(t *testing.T) {
 	handlerCalled = false
 	event = notification.Event{
 		Type:   notification.ObjectCreated,
-		Bucket: "test-bucket",
-		Key:    "other/data.json",
-		Source: "aws:s3",
+		Object: uri.Join("s3", "test-bucket", "other/data.json"),
 	}
 	err = objectHandler.HandleEvent(context.Background(), &event)
 	if err != nil {
@@ -268,7 +261,7 @@ func TestObjectHandlerMultipleFilters(t *testing.T) {
 func TestObjectHandlerFilterError(t *testing.T) {
 	bucket := memory.NewBucket()
 
-	registry := storage.RegistryFunc(func(ctx context.Context, uri string) (storage.Bucket, error) {
+	registry := storage.RegistryFunc(func(ctx context.Context, u string) (storage.Bucket, error) {
 		return bucket, nil
 	})
 
@@ -288,9 +281,7 @@ func TestObjectHandlerFilterError(t *testing.T) {
 
 	event := notification.Event{
 		Type:   notification.ObjectCreated,
-		Bucket: "test-bucket",
-		Key:    "data.json",
-		Source: "aws:s3",
+		Object: uri.Join("s3", "test-bucket", "data.json"),
 	}
 
 	err := objectHandler.HandleEvent(context.Background(), &event)
@@ -307,7 +298,7 @@ func TestWithFiltersNoFilters(t *testing.T) {
 	})
 
 	wrapped := notification.WithFilters(handler)
-	event := notification.Event{Type: notification.ObjectCreated, Key: "test.json"}
+	event := notification.Event{Type: notification.ObjectCreated, Object: uri.Join("s3", "bucket", "test.json")}
 
 	err := wrapped.HandleEvent(context.Background(), &event)
 	if err != nil {
@@ -328,7 +319,7 @@ func TestWithFiltersPassesFilter(t *testing.T) {
 	wrapped := notification.WithFilters(handler,
 		notification.FilterEventType(notification.ObjectCreated),
 	)
-	event := notification.Event{Type: notification.ObjectCreated, Key: "test.json"}
+	event := notification.Event{Type: notification.ObjectCreated, Object: uri.Join("s3", "bucket", "test.json")}
 
 	err := wrapped.HandleEvent(context.Background(), &event)
 	if err != nil {
@@ -349,7 +340,7 @@ func TestWithFiltersRejectsFilter(t *testing.T) {
 	wrapped := notification.WithFilters(handler,
 		notification.FilterEventType(notification.ObjectCreated),
 	)
-	event := notification.Event{Type: notification.ObjectDeleted, Key: "test.json"}
+	event := notification.Event{Type: notification.ObjectDeleted, Object: uri.Join("s3", "bucket", "test.json")}
 
 	err := wrapped.HandleEvent(context.Background(), &event)
 	if err != nil {
@@ -371,7 +362,7 @@ func TestWithFiltersPropagatesError(t *testing.T) {
 	}
 
 	wrapped := notification.WithFilters(handler, errorFilter)
-	event := notification.Event{Type: notification.ObjectCreated, Key: "test.json"}
+	event := notification.Event{Type: notification.ObjectCreated, Object: uri.Join("s3", "bucket", "test.json")}
 
 	err := wrapped.HandleEvent(context.Background(), &event)
 	if err != expectedErr {
@@ -392,7 +383,7 @@ func TestWithFiltersMultipleFilters(t *testing.T) {
 	)
 
 	// Test: passes both filters
-	event := notification.Event{Type: notification.ObjectCreated, Key: "sessions/data.json"}
+	event := notification.Event{Type: notification.ObjectCreated, Object: uri.Join("s3", "bucket", "sessions/data.json")}
 	err := wrapped.HandleEvent(context.Background(), &event)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -403,7 +394,7 @@ func TestWithFiltersMultipleFilters(t *testing.T) {
 
 	// Test: fails first filter
 	handlerCalled = false
-	event = notification.Event{Type: notification.ObjectDeleted, Key: "sessions/data.json"}
+	event = notification.Event{Type: notification.ObjectDeleted, Object: uri.Join("s3", "bucket", "sessions/data.json")}
 	err = wrapped.HandleEvent(context.Background(), &event)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -414,7 +405,7 @@ func TestWithFiltersMultipleFilters(t *testing.T) {
 
 	// Test: fails second filter
 	handlerCalled = false
-	event = notification.Event{Type: notification.ObjectCreated, Key: "other/data.json"}
+	event = notification.Event{Type: notification.ObjectCreated, Object: uri.Join("s3", "bucket", "other/data.json")}
 	err = wrapped.HandleEvent(context.Background(), &event)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
