@@ -84,19 +84,19 @@ func (h *objectHandler) HandleEvent(ctx context.Context, event *Event) error {
 }
 
 func (h *objectHandler) handleCreate(ctx context.Context, event *Event) error {
-	// Determine the scheme from the event source
-	scheme := schemeFromSource(event.Source)
+	// Parse the object URI
+	scheme, bucketName, key := uri.Split(event.Object)
 
-	// Load the bucket from registry
-	bucket, err := h.registry.LoadBucket(ctx, uri.Join(scheme, event.Bucket))
+	// Load the bucket from registry (just scheme + bucket, no key)
+	bucket, err := h.registry.LoadBucket(ctx, uri.Join(scheme, bucketName))
 	if err != nil {
-		return fmt.Errorf("loading bucket %s: %w", event.Bucket, err)
+		return fmt.Errorf("loading bucket %s: %w", bucketName, err)
 	}
 
 	// Fetch the object
-	reader, info, err := bucket.GetObject(ctx, event.Key)
+	reader, info, err := bucket.GetObject(ctx, key)
 	if err != nil {
-		return fmt.Errorf("getting object %s/%s: %w", event.Bucket, event.Key, err)
+		return fmt.Errorf("getting object %s/%s: %w", bucketName, key, err)
 	}
 	defer reader.Close()
 
@@ -104,7 +104,7 @@ func (h *objectHandler) handleCreate(ctx context.Context, event *Event) error {
 	r := (&http.Request{
 		Method: http.MethodPost,
 		URL: &url.URL{
-			Path: "/" + event.Key,
+			Path: "/" + key,
 		},
 		Proto:         "HTTP/1.1",
 		ProtoMajor:    1,
@@ -112,7 +112,7 @@ func (h *objectHandler) handleCreate(ctx context.Context, event *Event) error {
 		Header:        make(http.Header),
 		Body:          reader,
 		ContentLength: info.Size,
-		Host:          event.Bucket,
+		Host:          bucketName,
 	}).WithContext(ctx)
 
 	// Set content headers from object metadata
@@ -140,8 +140,8 @@ func (h *objectHandler) handleCreate(ctx context.Context, event *Event) error {
 	if !event.Time.IsZero() {
 		r.Header.Set("X-Event-Time", event.Time.Format(time.RFC3339))
 	}
-	if event.Source != "" {
-		r.Header.Set("X-Event-Source", event.Source)
+	if scheme != "" {
+		r.Header.Set("X-Event-Source", scheme)
 	}
 
 	// Execute request using status capture writer
@@ -156,10 +156,10 @@ func (h *objectHandler) handleCreate(ctx context.Context, event *Event) error {
 	}
 
 	if h.deleteAfterProcessing {
-		if err := bucket.DeleteObject(ctx, event.Key); err != nil {
+		if err := bucket.DeleteObject(ctx, key); err != nil {
 			slog.ErrorContext(ctx, "failed to delete object after processing",
-				"bucket", event.Bucket,
-				"key", event.Key,
+				"bucket", bucketName,
+				"key", key,
 				"error", err)
 		}
 	}
@@ -168,25 +168,28 @@ func (h *objectHandler) handleCreate(ctx context.Context, event *Event) error {
 }
 
 func (h *objectHandler) handleDelete(ctx context.Context, event *Event) error {
+	// Parse the object URI
+	scheme, bucketName, key := uri.Split(event.Object)
+
 	// Create synthetic DELETE request (no body)
 	r := (&http.Request{
 		Method: http.MethodDelete,
 		URL: &url.URL{
-			Path: "/" + event.Key,
+			Path: "/" + key,
 		},
 		Proto:      "HTTP/1.1",
 		ProtoMajor: 1,
 		ProtoMinor: 1,
 		Header:     make(http.Header),
-		Host:       event.Bucket,
+		Host:       bucketName,
 	}).WithContext(ctx)
 
 	// Add event metadata headers
 	if !event.Time.IsZero() {
 		r.Header.Set("X-Event-Time", event.Time.Format(time.RFC3339))
 	}
-	if event.Source != "" {
-		r.Header.Set("X-Event-Source", event.Source)
+	if scheme != "" {
+		r.Header.Set("X-Event-Source", scheme)
 	}
 
 	// Execute request
@@ -201,21 +204,6 @@ func (h *objectHandler) handleDelete(ctx context.Context, event *Event) error {
 	}
 
 	return nil
-}
-
-// schemeFromSource returns the storage URI scheme for the given event source.
-func schemeFromSource(source string) string {
-	switch source {
-	case "aws:s3":
-		return "s3"
-	case "gcp:storage":
-		return "gs"
-	case "cloudflare:r2":
-		return "r2"
-	default:
-		// Default to s3 for backwards compatibility
-		return "s3"
-	}
 }
 
 // statusCaptureWriter captures the HTTP status code from a handler response.

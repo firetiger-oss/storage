@@ -31,6 +31,7 @@ import (
 
 	"github.com/firetiger-oss/storage/concurrent"
 	"github.com/firetiger-oss/storage/notification"
+	"github.com/firetiger-oss/storage/uri"
 )
 
 // R2Event represents an R2 bucket event notification.
@@ -94,12 +95,10 @@ func NewR2EventHandler(objectHandler notification.ObjectHandler) *R2EventHandler
 func (h *R2EventHandler) Handle(ctx context.Context, event R2Event) error {
 	// Build unified event
 	unified := notification.Event{
-		Bucket: event.Bucket,
-		Key:    event.Object.Key,
+		Object: uri.Join("r2", event.Bucket, event.Object.Key),
 		Size:   event.Object.Size,
 		ETag:   event.Object.ETag,
 		Time:   event.EventTime,
-		Source: "cloudflare:r2",
 	}
 
 	// Determine event type from action

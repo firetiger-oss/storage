@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/firetiger-oss/storage/notification"
+	"github.com/firetiger-oss/storage/uri"
 )
 
 func TestR2EventHandler(t *testing.T) {
@@ -138,17 +139,12 @@ func TestR2EventHandler(t *testing.T) {
 			if capturedEvent.Type != tt.expectedType {
 				t.Errorf("expected type %q, got %q", tt.expectedType, capturedEvent.Type)
 			}
-			if capturedEvent.Bucket != tt.event.Bucket {
-				t.Errorf("expected bucket %q, got %q", tt.event.Bucket, capturedEvent.Bucket)
-			}
-			if capturedEvent.Key != tt.expectedKey {
-				t.Errorf("expected key %q, got %q", tt.expectedKey, capturedEvent.Key)
+			expectedObject := uri.Join("r2", tt.event.Bucket, tt.expectedKey)
+			if capturedEvent.Object != expectedObject {
+				t.Errorf("expected object %q, got %q", expectedObject, capturedEvent.Object)
 			}
 			if capturedEvent.Size != tt.expectedSize {
 				t.Errorf("expected size %d, got %d", tt.expectedSize, capturedEvent.Size)
-			}
-			if capturedEvent.Source != "cloudflare:r2" {
-				t.Errorf("expected source cloudflare:r2, got %q", capturedEvent.Source)
 			}
 		})
 	}

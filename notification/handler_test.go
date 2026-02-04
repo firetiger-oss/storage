@@ -12,6 +12,7 @@ import (
 	"github.com/firetiger-oss/storage"
 	"github.com/firetiger-oss/storage/memory"
 	"github.com/firetiger-oss/storage/notification"
+	"github.com/firetiger-oss/storage/uri"
 )
 
 func TestObjectHandlerCreateEvent(t *testing.T) {
@@ -55,11 +56,9 @@ func TestObjectHandlerCreateEvent(t *testing.T) {
 
 	event := notification.Event{
 		Type:   notification.ObjectCreated,
-		Bucket: "test-bucket",
-		Key:    "path/to/object.json",
+		Object: uri.Join("s3", "test-bucket", "path/to/object.json"),
 		Size:   17,
 		Time:   time.Now(),
-		Source: "aws:s3",
 	}
 
 	err = objectHandler.HandleEvent(context.Background(), &event)
@@ -108,10 +107,8 @@ func TestObjectHandlerDeleteEvent(t *testing.T) {
 
 	event := notification.Event{
 		Type:   notification.ObjectDeleted,
-		Bucket: "test-bucket",
-		Key:    "path/to/deleted.json",
+		Object: uri.Join("s3", "test-bucket", "path/to/deleted.json"),
 		Time:   time.Now(),
-		Source: "aws:s3",
 	}
 
 	err := objectHandler.HandleEvent(context.Background(), &event)
@@ -149,9 +146,7 @@ func TestObjectHandlerHandlerError(t *testing.T) {
 
 	event := notification.Event{
 		Type:   notification.ObjectCreated,
-		Bucket: "test-bucket",
-		Key:    "test.txt",
-		Source: "aws:s3",
+		Object: uri.Join("s3", "test-bucket", "test.txt"),
 	}
 
 	err := objectHandler.HandleEvent(context.Background(), &event)
@@ -178,9 +173,7 @@ func TestObjectHandlerObjectNotFound(t *testing.T) {
 
 	event := notification.Event{
 		Type:   notification.ObjectCreated,
-		Bucket: "test-bucket",
-		Key:    "nonexistent.txt",
-		Source: "aws:s3",
+		Object: uri.Join("s3", "test-bucket", "nonexistent.txt"),
 	}
 
 	err := objectHandler.HandleEvent(context.Background(), &event)
@@ -219,9 +212,7 @@ func TestObjectHandlerEventHeaders(t *testing.T) {
 	eventTime := time.Date(2025, 1, 15, 10, 30, 0, 0, time.UTC)
 	event := notification.Event{
 		Type:   notification.ObjectCreated,
-		Bucket: "test-bucket",
-		Key:    "test.txt",
-		Source: "aws:s3",
+		Object: uri.Join("s3", "test-bucket", "test.txt"),
 		Time:   eventTime,
 	}
 
@@ -230,8 +221,8 @@ func TestObjectHandlerEventHeaders(t *testing.T) {
 		t.Fatalf("HandleEvent failed: %v", err)
 	}
 
-	if headers.Get("X-Event-Source") != "aws:s3" {
-		t.Errorf("expected X-Event-Source aws:s3, got %s", headers.Get("X-Event-Source"))
+	if headers.Get("X-Event-Source") != "s3" {
+		t.Errorf("expected X-Event-Source s3, got %s", headers.Get("X-Event-Source"))
 	}
 	if headers.Get("X-Event-Time") != eventTime.Format(time.RFC3339) {
 		t.Errorf("expected X-Event-Time %s, got %s",
@@ -265,9 +256,7 @@ func TestObjectHandlerDeleteAfterProcessing(t *testing.T) {
 
 	event := &notification.Event{
 		Type:   notification.ObjectCreated,
-		Bucket: "test-bucket",
-		Key:    "test/file.txt",
-		Source: "aws:s3",
+		Object: uri.Join("s3", "test-bucket", "test/file.txt"),
 	}
 
 	err := handler.HandleEvent(t.Context(), event)
@@ -306,9 +295,7 @@ func TestObjectConsumer(t *testing.T) {
 
 	event := &notification.Event{
 		Type:   notification.ObjectCreated,
-		Bucket: "test-bucket",
-		Key:    "consume/data.json",
-		Source: "aws:s3",
+		Object: uri.Join("s3", "test-bucket", "consume/data.json"),
 	}
 
 	err := handler.HandleEvent(t.Context(), event)
@@ -346,9 +333,7 @@ func TestObjectHandlerDeleteAfterProcessingOnlyOnSuccess(t *testing.T) {
 
 	event := &notification.Event{
 		Type:   notification.ObjectCreated,
-		Bucket: "test-bucket",
-		Key:    "test/file.txt",
-		Source: "aws:s3",
+		Object: uri.Join("s3", "test-bucket", "test/file.txt"),
 	}
 
 	err := handler.HandleEvent(t.Context(), event)

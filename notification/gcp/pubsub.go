@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/firetiger-oss/storage/notification"
+	"github.com/firetiger-oss/storage/uri"
 )
 
 // PubSubPushRequest represents a Pub/Sub push delivery request.
@@ -69,9 +70,7 @@ func (h *BucketNotificationHandler) Handle(ctx context.Context, msg PubSubMessag
 
 	// Build unified event
 	unified := notification.Event{
-		Bucket: bucketID,
-		Key:    objectID,
-		Source: "gcp:storage",
+		Object: uri.Join("gs", bucketID, objectID),
 	}
 
 	// Parse publish time

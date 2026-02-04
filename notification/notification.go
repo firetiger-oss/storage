@@ -22,11 +22,8 @@ type Event struct {
 	// Type indicates whether this is a create or delete event.
 	Type EventType
 
-	// Bucket is the name of the bucket where the event occurred.
-	Bucket string
-
-	// Key is the object key (path) that was affected.
-	Key string
+	// Object is the full object URI (e.g., "s3://bucket/key", "gs://bucket/key").
+	Object string
 
 	// Size is the object size in bytes (only for create events).
 	Size int64
@@ -36,9 +33,6 @@ type Event struct {
 
 	// Time is when the event occurred.
 	Time time.Time
-
-	// Source identifies the notification source (e.g., "aws:s3", "gcp:storage").
-	Source string
 
 	// Region is the cloud region where the event originated.
 	Region string

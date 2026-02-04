@@ -15,6 +15,7 @@ import (
 	"github.com/firetiger-oss/storage/memory"
 	"github.com/firetiger-oss/storage/notification"
 	"github.com/firetiger-oss/storage/notification/aws"
+	"github.com/firetiger-oss/storage/uri"
 )
 
 func TestS3EventHandlerObjectCreated(t *testing.T) {
@@ -53,20 +54,15 @@ func TestS3EventHandlerObjectCreated(t *testing.T) {
 	if receivedEvent.Type != notification.ObjectCreated {
 		t.Errorf("expected type ObjectCreated, got %s", receivedEvent.Type)
 	}
-	if receivedEvent.Bucket != "my-bucket" {
-		t.Errorf("expected bucket my-bucket, got %s", receivedEvent.Bucket)
-	}
-	if receivedEvent.Key != "path/to/file.json" {
-		t.Errorf("expected key path/to/file.json, got %s", receivedEvent.Key)
+	expectedObject := uri.Join("s3", "my-bucket", "path/to/file.json")
+	if receivedEvent.Object != expectedObject {
+		t.Errorf("expected object %s, got %s", expectedObject, receivedEvent.Object)
 	}
 	if receivedEvent.Size != 1234 {
 		t.Errorf("expected size 1234, got %d", receivedEvent.Size)
 	}
 	if receivedEvent.ETag != "abc123" {
 		t.Errorf("expected etag abc123, got %s", receivedEvent.ETag)
-	}
-	if receivedEvent.Source != "aws:s3" {
-		t.Errorf("expected source aws:s3, got %s", receivedEvent.Source)
 	}
 	if receivedEvent.Region != "us-west-2" {
 		t.Errorf("expected region us-west-2, got %s", receivedEvent.Region)
@@ -243,20 +239,15 @@ func TestS3LambdaHandlerObjectCreated(t *testing.T) {
 	if receivedEvent.Type != notification.ObjectCreated {
 		t.Errorf("expected type ObjectCreated, got %s", receivedEvent.Type)
 	}
-	if receivedEvent.Bucket != "my-bucket" {
-		t.Errorf("expected bucket my-bucket, got %s", receivedEvent.Bucket)
-	}
-	if receivedEvent.Key != "path/to/file.json" {
-		t.Errorf("expected key path/to/file.json, got %s", receivedEvent.Key)
+	expectedObject := uri.Join("s3", "my-bucket", "path/to/file.json")
+	if receivedEvent.Object != expectedObject {
+		t.Errorf("expected object %s, got %s", expectedObject, receivedEvent.Object)
 	}
 	if receivedEvent.Size != 1234 {
 		t.Errorf("expected size 1234, got %d", receivedEvent.Size)
 	}
 	if receivedEvent.ETag != "abc123" {
 		t.Errorf("expected etag abc123, got %s", receivedEvent.ETag)
-	}
-	if receivedEvent.Source != "aws:s3" {
-		t.Errorf("expected source aws:s3, got %s", receivedEvent.Source)
 	}
 	if receivedEvent.Region != "us-west-2" {
 		t.Errorf("expected region us-west-2, got %s", receivedEvent.Region)
@@ -339,14 +330,14 @@ func TestS3LambdaHandlerMultipleRecords(t *testing.T) {
 	}
 
 	// Events may be processed in any order due to concurrent execution
-	keys := make(map[string]bool)
+	objects := make(map[string]bool)
 	for _, e := range receivedEvents {
-		keys[e.Key] = true
+		objects[e.Object] = true
 	}
-	if !keys["file1.txt"] {
+	if !objects[uri.Join("s3", "bucket-1", "file1.txt")] {
 		t.Error("expected file1.txt in received events")
 	}
-	if !keys["file2.txt"] {
+	if !objects[uri.Join("s3", "bucket-2", "file2.txt")] {
 		t.Error("expected file2.txt in received events")
 	}
 }
