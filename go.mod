@@ -7,6 +7,7 @@ require (
 	cloud.google.com/go/storage v1.56.1
 	github.com/EmissarySocial/emissary v0.7.0
 	github.com/achille-roussel/kway-go v1.0.1
+	github.com/aws/aws-lambda-go v1.52.0
 	github.com/aws/aws-sdk-go-v2 v1.41.0
 	github.com/aws/aws-sdk-go-v2/config v1.32.5
 	github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.19.8
