@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/firetiger-oss/storage/cache"
-	"github.com/firetiger-oss/storage/concurrent"
+	"github.com/firetiger-oss/concurrent"
 )
 
 const (

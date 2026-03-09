@@ -16,7 +16,7 @@ import (
 	"github.com/firetiger-oss/storage"
 	"github.com/firetiger-oss/storage/backoff"
 	"github.com/firetiger-oss/storage/cache"
-	"github.com/firetiger-oss/storage/concurrent"
+	"github.com/firetiger-oss/concurrent"
 	"github.com/firetiger-oss/storage/gs/gsclient"
 	"github.com/firetiger-oss/storage/internal/sequtil"
 	"github.com/firetiger-oss/storage/uri"
