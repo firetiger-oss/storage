@@ -18,8 +18,8 @@ import (
 
 type temporaryError struct{ err error }
 
-func (e *temporaryError) Error() string  { return e.err.Error() }
-func (e *temporaryError) Unwrap() error  { return e.err }
+func (e *temporaryError) Error() string   { return e.err.Error() }
+func (e *temporaryError) Unwrap() error   { return e.err }
 func (e *temporaryError) Temporary() bool { return true }
 
 func makeTemporary(err error) error { return &temporaryError{err: err} }
