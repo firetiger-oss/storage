@@ -155,11 +155,11 @@ func (b *presignRedirectBucket) PresignPutObject(ctx context.Context, key string
 	return b.presignedURL, nil
 }
 
-func (b *presignRedirectBucket) PresignHeadObject(ctx context.Context, key string) (string, error) {
+func (b *presignRedirectBucket) PresignHeadObject(ctx context.Context, key string, expiration time.Duration) (string, error) {
 	return b.presignedURL, nil
 }
 
-func (b *presignRedirectBucket) PresignDeleteObject(ctx context.Context, key string) (string, error) {
+func (b *presignRedirectBucket) PresignDeleteObject(ctx context.Context, key string, expiration time.Duration) (string, error) {
 	return b.presignedURL, nil
 }
 

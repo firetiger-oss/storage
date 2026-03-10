@@ -10,10 +10,15 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 )
 
+// WithInstrumentation returns an adapter that wraps buckets with OpenTelemetry
+// tracing. Each storage operation is recorded as a span with relevant attributes.
 func WithInstrumentation() Adapter {
 	return AdapterFunc(InstrumentedBucket)
 }
 
+// InstrumentedBucket wraps a bucket with OpenTelemetry tracing spans for all
+// storage operations. Span attributes include bucket location, object keys,
+// content metadata, and error information.
 func InstrumentedBucket(bucket Bucket) Bucket {
 	return &instrumentedBucket{base: bucket}
 }
@@ -184,22 +189,22 @@ func (i *instrumentedBucket) PresignPutObject(ctx context.Context, key string, e
 	return url, err
 }
 
-func (i *instrumentedBucket) PresignHeadObject(ctx context.Context, key string) (string, error) {
+func (i *instrumentedBucket) PresignHeadObject(ctx context.Context, key string, expiration time.Duration) (string, error) {
 	ctx, span := oteltrace.Start(ctx, "storage.Bucket.PresignHeadObject",
 		attribute.String("storage.bucket.location", i.base.Location()),
 		attribute.String("storage.bucket.presign.key", key))
 	defer span.End()
-	url, err := i.base.PresignHeadObject(ctx, key)
+	url, err := i.base.PresignHeadObject(ctx, key, expiration)
 	oteltrace.RecordError(span, err)
 	return url, err
 }
 
-func (i *instrumentedBucket) PresignDeleteObject(ctx context.Context, key string) (string, error) {
+func (i *instrumentedBucket) PresignDeleteObject(ctx context.Context, key string, expiration time.Duration) (string, error) {
 	ctx, span := oteltrace.Start(ctx, "storage.Bucket.PresignDeleteObject",
 		attribute.String("storage.bucket.location", i.base.Location()),
 		attribute.String("storage.bucket.presign.key", key))
 	defer span.End()
-	url, err := i.base.PresignDeleteObject(ctx, key)
+	url, err := i.base.PresignDeleteObject(ctx, key, expiration)
 	oteltrace.RecordError(span, err)
 	return url, err
 }

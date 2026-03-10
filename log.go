@@ -33,10 +33,14 @@ func logLevelOf(err error) slog.Level {
 	return slog.LevelError
 }
 
+// WithLogger returns an adapter that wraps buckets with structured logging
+// of all operations using the provided slog.Logger.
 func WithLogger(logger *slog.Logger) Adapter {
 	return AdapterFunc(func(base Bucket) Bucket { return LoggedBucket(base, logger) })
 }
 
+// LoggedBucket wraps a bucket with structured logging. All operations are logged
+// with relevant attributes such as key, size, duration, and error details.
 func LoggedBucket(bucket Bucket, logger *slog.Logger) Bucket {
 	return &loggedBucket{bucket: bucket, logger: logger}
 }
@@ -328,9 +332,9 @@ func (b *loggedBucket) PresignPutObject(ctx context.Context, key string, expirat
 	return url, err
 }
 
-func (b *loggedBucket) PresignHeadObject(ctx context.Context, key string) (string, error) {
+func (b *loggedBucket) PresignHeadObject(ctx context.Context, key string, expiration time.Duration) (string, error) {
 	start := time.Now()
-	url, err := b.bucket.PresignHeadObject(ctx, key)
+	url, err := b.bucket.PresignHeadObject(ctx, key, expiration)
 
 	const op = "Presign"
 	attrMethod := slog.String("method", "HeadObject")
@@ -349,9 +353,9 @@ func (b *loggedBucket) PresignHeadObject(ctx context.Context, key string) (strin
 	return url, err
 }
 
-func (b *loggedBucket) PresignDeleteObject(ctx context.Context, key string) (string, error) {
+func (b *loggedBucket) PresignDeleteObject(ctx context.Context, key string, expiration time.Duration) (string, error) {
 	start := time.Now()
-	url, err := b.bucket.PresignDeleteObject(ctx, key)
+	url, err := b.bucket.PresignDeleteObject(ctx, key, expiration)
 
 	const op = "Presign"
 	attrMethod := slog.String("method", "DeleteObject")

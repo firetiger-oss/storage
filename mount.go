@@ -243,18 +243,18 @@ func (b *mountedBucket) PresignPutObject(ctx context.Context, key string, expira
 	return b.bucket.PresignPutObject(ctx, key, expiration, options...)
 }
 
-func (b *mountedBucket) PresignHeadObject(ctx context.Context, key string) (string, error) {
+func (b *mountedBucket) PresignHeadObject(ctx context.Context, key string, expiration time.Duration) (string, error) {
 	if strings.HasPrefix(key, b.mount.prefix) {
-		return b.mount.PresignHeadObject(ctx, key)
+		return b.mount.PresignHeadObject(ctx, key, expiration)
 	}
-	return b.bucket.PresignHeadObject(ctx, key)
+	return b.bucket.PresignHeadObject(ctx, key, expiration)
 }
 
-func (b *mountedBucket) PresignDeleteObject(ctx context.Context, key string) (string, error) {
+func (b *mountedBucket) PresignDeleteObject(ctx context.Context, key string, expiration time.Duration) (string, error) {
 	if strings.HasPrefix(key, b.mount.prefix) {
-		return b.mount.PresignDeleteObject(ctx, key)
+		return b.mount.PresignDeleteObject(ctx, key, expiration)
 	}
-	return b.bucket.PresignDeleteObject(ctx, key)
+	return b.bucket.PresignDeleteObject(ctx, key, expiration)
 }
 
 type mountedPrefixBucket struct {
@@ -432,24 +432,24 @@ func (b *mountedPrefixBucket) PresignPutObject(ctx context.Context, key string, 
 	return url, err
 }
 
-func (b *mountedPrefixBucket) PresignHeadObject(ctx context.Context, key string) (string, error) {
+func (b *mountedPrefixBucket) PresignHeadObject(ctx context.Context, key string, expiration time.Duration) (string, error) {
 	if !strings.HasPrefix(key, b.prefix) {
 		return "", fmt.Errorf("%s: %w", key, ErrObjectNotFound)
 	}
 	strippedKey := strings.TrimPrefix(key, b.prefix)
-	url, err := b.bucket.PresignHeadObject(ctx, strippedKey)
+	url, err := b.bucket.PresignHeadObject(ctx, strippedKey, expiration)
 	if err != nil {
 		err = b.scopeError(err)
 	}
 	return url, err
 }
 
-func (b *mountedPrefixBucket) PresignDeleteObject(ctx context.Context, key string) (string, error) {
+func (b *mountedPrefixBucket) PresignDeleteObject(ctx context.Context, key string, expiration time.Duration) (string, error) {
 	if !strings.HasPrefix(key, b.prefix) {
 		return "", fmt.Errorf("%s: %w", key, ErrObjectNotFound)
 	}
 	strippedKey := strings.TrimPrefix(key, b.prefix)
-	url, err := b.bucket.PresignDeleteObject(ctx, strippedKey)
+	url, err := b.bucket.PresignDeleteObject(ctx, strippedKey, expiration)
 	if err != nil {
 		err = b.scopeError(err)
 	}

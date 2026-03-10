@@ -134,10 +134,10 @@ func (b *prefixedBucket) PresignPutObject(ctx context.Context, key string, expir
 	return b.bucket.PresignPutObject(ctx, b.prefix+key, expiration, options...)
 }
 
-func (b *prefixedBucket) PresignHeadObject(ctx context.Context, key string) (string, error) {
-	return b.bucket.PresignHeadObject(ctx, b.prefix+key)
+func (b *prefixedBucket) PresignHeadObject(ctx context.Context, key string, expiration time.Duration) (string, error) {
+	return b.bucket.PresignHeadObject(ctx, b.prefix+key, expiration)
 }
 
-func (b *prefixedBucket) PresignDeleteObject(ctx context.Context, key string) (string, error) {
-	return b.bucket.PresignDeleteObject(ctx, b.prefix+key)
+func (b *prefixedBucket) PresignDeleteObject(ctx context.Context, key string, expiration time.Duration) (string, error) {
+	return b.bucket.PresignDeleteObject(ctx, b.prefix+key, expiration)
 }

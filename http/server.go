@@ -132,7 +132,7 @@ func handleHEAD(w http.ResponseWriter, r *http.Request, b storage.Bucket, h *Han
 		head.flush()
 	} else {
 		if h.presignRedirect {
-			presignedURL, err := b.PresignHeadObject(r.Context(), makeKey(r))
+			presignedURL, err := b.PresignHeadObject(r.Context(), makeKey(r), h.presignExpiration)
 			if err != nil {
 				writeError(w, err)
 				return
@@ -145,7 +145,7 @@ func handleHEAD(w http.ResponseWriter, r *http.Request, b storage.Bucket, h *Han
 		object, err := b.HeadObject(r.Context(), makeKey(r))
 		if err != nil {
 			if errors.Is(err, storage.ErrPresignRedirect) {
-				presignedURL, presignErr := b.PresignHeadObject(r.Context(), makeKey(r))
+				presignedURL, presignErr := b.PresignHeadObject(r.Context(), makeKey(r), h.presignExpiration)
 				if presignErr != nil {
 					writeError(w, presignErr)
 					return
@@ -504,7 +504,7 @@ func handlePOST(w http.ResponseWriter, r *http.Request, b storage.Bucket, h *Han
 func handleDELETE(w http.ResponseWriter, r *http.Request, b storage.Bucket, h *HandlerOptions) {
 	if r.URL.Path != "/" {
 		if h.presignRedirect {
-			presignedURL, err := b.PresignDeleteObject(r.Context(), makeKey(r))
+			presignedURL, err := b.PresignDeleteObject(r.Context(), makeKey(r), h.presignExpiration)
 			if err != nil {
 				writeError(w, err)
 				return
@@ -516,7 +516,7 @@ func handleDELETE(w http.ResponseWriter, r *http.Request, b storage.Bucket, h *H
 
 		if err := b.DeleteObject(r.Context(), makeKey(r)); err != nil {
 			if errors.Is(err, storage.ErrPresignRedirect) {
-				presignedURL, presignErr := b.PresignDeleteObject(r.Context(), makeKey(r))
+				presignedURL, presignErr := b.PresignDeleteObject(r.Context(), makeKey(r), h.presignExpiration)
 				if presignErr != nil {
 					writeError(w, presignErr)
 					return

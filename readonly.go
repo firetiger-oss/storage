@@ -7,6 +7,14 @@ import (
 	"time"
 )
 
+// WithReadOnly returns an adapter that wraps buckets to reject all write
+// operations with ErrBucketReadOnly.
+func WithReadOnly() Adapter {
+	return AdapterFunc(ReadOnlyBucket)
+}
+
+// ReadOnlyBucket wraps a bucket to reject all write operations with
+// ErrBucketReadOnly. Read operations are passed through to the underlying bucket.
 func ReadOnlyBucket(bucket Bucket) Bucket {
 	return &readOnlyBucket{bucket: bucket}
 }
@@ -76,10 +84,10 @@ func (b *readOnlyBucket) PresignPutObject(ctx context.Context, key string, expir
 	return "", ErrBucketReadOnly
 }
 
-func (b *readOnlyBucket) PresignHeadObject(ctx context.Context, key string) (string, error) {
-	return b.bucket.PresignHeadObject(ctx, key)
+func (b *readOnlyBucket) PresignHeadObject(ctx context.Context, key string, expiration time.Duration) (string, error) {
+	return b.bucket.PresignHeadObject(ctx, key, expiration)
 }
 
-func (b *readOnlyBucket) PresignDeleteObject(ctx context.Context, key string) (string, error) {
+func (b *readOnlyBucket) PresignDeleteObject(ctx context.Context, key string, expiration time.Duration) (string, error) {
 	return "", ErrBucketReadOnly
 }

@@ -523,7 +523,7 @@ func (b *Bucket) PresignPutObject(ctx context.Context, key string, expiration ti
 	return url, nil
 }
 
-func (b *Bucket) PresignHeadObject(ctx context.Context, key string) (string, error) {
+func (b *Bucket) PresignHeadObject(ctx context.Context, key string, expiration time.Duration) (string, error) {
 	if err := storage.ValidObjectKey(key); err != nil {
 		return "", storage.ErrInvalidObjectKey
 	}
@@ -531,7 +531,7 @@ func (b *Bucket) PresignHeadObject(ctx context.Context, key string) (string, err
 	opts := &gcloud.SignedURLOptions{
 		Scheme:  gcloud.SigningSchemeV4,
 		Method:  "HEAD",
-		Expires: time.Now().Add(5 * time.Minute), // Default 5 minute expiration
+		Expires: time.Now().Add(expiration),
 	}
 
 	url, err := b.client.Bucket(b.bucket).SignedURL(key, opts)
@@ -541,7 +541,7 @@ func (b *Bucket) PresignHeadObject(ctx context.Context, key string) (string, err
 	return url, nil
 }
 
-func (b *Bucket) PresignDeleteObject(ctx context.Context, key string) (string, error) {
+func (b *Bucket) PresignDeleteObject(ctx context.Context, key string, expiration time.Duration) (string, error) {
 	if err := storage.ValidObjectKey(key); err != nil {
 		return "", storage.ErrInvalidObjectKey
 	}
@@ -549,7 +549,7 @@ func (b *Bucket) PresignDeleteObject(ctx context.Context, key string) (string, e
 	opts := &gcloud.SignedURLOptions{
 		Scheme:  gcloud.SigningSchemeV4,
 		Method:  "DELETE",
-		Expires: time.Now().Add(5 * time.Minute), // Default 5 minute expiration
+		Expires: time.Now().Add(expiration),
 	}
 
 	url, err := b.client.Bucket(b.bucket).SignedURL(key, opts)
