@@ -692,7 +692,7 @@ func (b *Bucket) PresignPutObject(ctx context.Context, key string, expiration ti
 	return request.URL, nil
 }
 
-func (b *Bucket) PresignHeadObject(ctx context.Context, key string) (string, error) {
+func (b *Bucket) PresignHeadObject(ctx context.Context, key string, expiration time.Duration) (string, error) {
 	if err := storage.ValidObjectKey(key); err != nil {
 		return "", storage.ErrInvalidObjectKey
 	}
@@ -702,14 +702,24 @@ func (b *Bucket) PresignHeadObject(ctx context.Context, key string) (string, err
 		return "", err
 	}
 
-	request, err := presignClient.PresignHeadObject(ctx, newHeadObjectInput(b.bucket, key))
+	request, err := presignClient.PresignHeadObject(ctx, newHeadObjectInput(b.bucket, key),
+		func(po *s3.PresignOptions) {
+			if b.presignOptions.Expires != 0 && expiration == 0 {
+				po.Expires = b.presignOptions.Expires
+			} else {
+				po.Expires = expiration
+			}
+			if len(b.presignOptions.ClientOptions) > 0 {
+				po.ClientOptions = append(po.ClientOptions, b.presignOptions.ClientOptions...)
+			}
+		})
 	if err != nil {
 		return "", makeIcebergError(err)
 	}
 	return request.URL, nil
 }
 
-func (b *Bucket) PresignDeleteObject(ctx context.Context, key string) (string, error) {
+func (b *Bucket) PresignDeleteObject(ctx context.Context, key string, expiration time.Duration) (string, error) {
 	if err := storage.ValidObjectKey(key); err != nil {
 		return "", storage.ErrInvalidObjectKey
 	}
@@ -719,7 +729,17 @@ func (b *Bucket) PresignDeleteObject(ctx context.Context, key string) (string, e
 		return "", err
 	}
 
-	request, err := presignClient.PresignDeleteObject(ctx, newDeleteObjectInput(b.bucket, key))
+	request, err := presignClient.PresignDeleteObject(ctx, newDeleteObjectInput(b.bucket, key),
+		func(po *s3.PresignOptions) {
+			if b.presignOptions.Expires != 0 && expiration == 0 {
+				po.Expires = b.presignOptions.Expires
+			} else {
+				po.Expires = expiration
+			}
+			if len(b.presignOptions.ClientOptions) > 0 {
+				po.ClientOptions = append(po.ClientOptions, b.presignOptions.ClientOptions...)
+			}
+		})
 	if err != nil {
 		return "", makeIcebergError(err)
 	}

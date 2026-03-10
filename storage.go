@@ -153,10 +153,12 @@ type Bucket interface {
 	PresignPutObject(ctx context.Context, key string, expiration time.Duration, options ...PutOption) (string, error)
 
 	// PresignHeadObject generates a presigned URL for getting object metadata.
-	PresignHeadObject(ctx context.Context, key string) (string, error)
+	// The expiration parameter specifies how long the presigned URL will remain valid.
+	PresignHeadObject(ctx context.Context, key string, expiration time.Duration) (string, error)
 
 	// PresignDeleteObject generates a presigned URL for deleting an object.
-	PresignDeleteObject(ctx context.Context, key string) (string, error)
+	// The expiration parameter specifies how long the presigned URL will remain valid.
+	PresignDeleteObject(ctx context.Context, key string, expiration time.Duration) (string, error)
 }
 
 type Adapter interface {

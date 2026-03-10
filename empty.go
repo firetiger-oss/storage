@@ -76,10 +76,10 @@ func (emptyBucket) PresignPutObject(ctx context.Context, key string, expiration 
 	return "", cmp.Or(context.Cause(ctx), ErrBucketReadOnly)
 }
 
-func (emptyBucket) PresignHeadObject(ctx context.Context, key string) (string, error) {
+func (emptyBucket) PresignHeadObject(ctx context.Context, key string, expiration time.Duration) (string, error) {
 	return "", cmp.Or(context.Cause(ctx), ErrPresignNotSupported)
 }
 
-func (emptyBucket) PresignDeleteObject(ctx context.Context, key string) (string, error) {
+func (emptyBucket) PresignDeleteObject(ctx context.Context, key string, expiration time.Duration) (string, error) {
 	return "", cmp.Or(context.Cause(ctx), ErrBucketReadOnly)
 }

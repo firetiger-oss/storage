@@ -1,6 +1,12 @@
 # storage
 
+[![Go Reference](https://pkg.go.dev/badge/github.com/firetiger-oss/storage.svg)](https://pkg.go.dev/github.com/firetiger-oss/storage)
+[![CI](https://github.com/firetiger-oss/storage/actions/workflows/ci.yml/badge.svg)](https://github.com/firetiger-oss/storage/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+
 Go package to interact with cloud object storage providers using a unified interface.
+
+For full API documentation, see [pkg.go.dev](https://pkg.go.dev/github.com/firetiger-oss/storage).
 
 ## Overview
 
@@ -181,3 +187,17 @@ for object, err := range bucket.WatchObjects(ctx, storage.KeyPrefix("logs/")) {
     }
 }
 ```
+
+## Contributing
+
+Contributions are welcome! Here's how to get started:
+
+1. Fork the repository and clone it locally
+2. Run tests: `go test ./...`
+3. Code style is enforced by `gofmt` in CI
+4. To add a new storage backend: create a new package, implement the `Bucket` interface, and register it via `storage.Register` in an `init()` function (see existing backends for examples)
+5. Open a pull request against `main`
+
+## License
+
+This project is licensed under the Apache License 2.0 — see the [LICENSE](LICENSE) file for details.

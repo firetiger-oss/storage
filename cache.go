@@ -347,12 +347,12 @@ func (c *cachedBucket) PresignPutObject(ctx context.Context, key string, expirat
 	return c.bucket.PresignPutObject(ctx, key, expiration, options...)
 }
 
-func (c *cachedBucket) PresignHeadObject(ctx context.Context, key string) (string, error) {
-	return c.bucket.PresignHeadObject(ctx, key)
+func (c *cachedBucket) PresignHeadObject(ctx context.Context, key string, expiration time.Duration) (string, error) {
+	return c.bucket.PresignHeadObject(ctx, key, expiration)
 }
 
-func (c *cachedBucket) PresignDeleteObject(ctx context.Context, key string) (string, error) {
-	return c.bucket.PresignDeleteObject(ctx, key)
+func (c *cachedBucket) PresignDeleteObject(ctx context.Context, key string, expiration time.Duration) (string, error) {
+	return c.bucket.PresignDeleteObject(ctx, key, expiration)
 }
 
 type cachedObjectBody struct {

@@ -176,14 +176,14 @@ func TestEmptyBucket(t *testing.T) {
 	})
 
 	t.Run("PresignHeadObject", func(t *testing.T) {
-		_, err := bucket.PresignHeadObject(ctx, "test/object.txt")
+		_, err := bucket.PresignHeadObject(ctx, "test/object.txt", time.Hour)
 		if !errors.Is(err, storage.ErrPresignNotSupported) {
 			t.Errorf("expected ErrPresignNotSupported for PresignHeadObject, got %v", err)
 		}
 	})
 
 	t.Run("PresignDeleteObject", func(t *testing.T) {
-		_, err := bucket.PresignDeleteObject(ctx, "test/object.txt")
+		_, err := bucket.PresignDeleteObject(ctx, "test/object.txt", time.Hour)
 		if !errors.Is(err, storage.ErrBucketReadOnly) {
 			t.Errorf("expected ErrBucketReadOnly for PresignDeleteObject, got %v", err)
 		}

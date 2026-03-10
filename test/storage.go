@@ -1675,7 +1675,7 @@ func testStoragePresign(t *testing.T, bucket storage.Bucket) {
 	})
 
 	t.Run("HeadObject", func(t *testing.T) {
-		url, err := bucket.PresignHeadObject(ctx, key)
+		url, err := bucket.PresignHeadObject(ctx, key, time.Hour)
 		if err != nil {
 			if !errors.Is(err, storage.ErrPresignNotSupported) {
 				t.Errorf("expected ErrPresignNotSupported or nil, got: %v", err)
@@ -1688,7 +1688,7 @@ func testStoragePresign(t *testing.T, bucket storage.Bucket) {
 	})
 
 	t.Run("DeleteObject", func(t *testing.T) {
-		url, err := bucket.PresignDeleteObject(ctx, key)
+		url, err := bucket.PresignDeleteObject(ctx, key, time.Hour)
 		if err != nil {
 			if !errors.Is(err, storage.ErrPresignNotSupported) {
 				t.Errorf("expected ErrPresignNotSupported or nil, got: %v", err)

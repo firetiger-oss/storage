@@ -529,14 +529,14 @@ func (b *Bucket) PresignPutObject(ctx context.Context, key string, expiration ti
 	return "", storage.ErrPresignNotSupported
 }
 
-func (b *Bucket) PresignHeadObject(ctx context.Context, key string) (string, error) {
+func (b *Bucket) PresignHeadObject(ctx context.Context, key string, expiration time.Duration) (string, error) {
 	if err := storage.ValidObjectKey(key); err != nil {
 		return "", storage.ErrInvalidObjectKey
 	}
 	return "", storage.ErrPresignNotSupported
 }
 
-func (b *Bucket) PresignDeleteObject(ctx context.Context, key string) (string, error) {
+func (b *Bucket) PresignDeleteObject(ctx context.Context, key string, expiration time.Duration) (string, error) {
 	if err := storage.ValidObjectKey(key); err != nil {
 		return "", storage.ErrInvalidObjectKey
 	}

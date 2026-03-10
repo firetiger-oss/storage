@@ -568,10 +568,10 @@ func (b *cachedBucket) PresignPutObject(ctx context.Context, key string, expirat
 	return b.bucket.PresignPutObject(ctx, key, expiration, options...)
 }
 
-func (b *cachedBucket) PresignHeadObject(ctx context.Context, key string) (string, error) {
-	return b.bucket.PresignHeadObject(ctx, key)
+func (b *cachedBucket) PresignHeadObject(ctx context.Context, key string, expiration time.Duration) (string, error) {
+	return b.bucket.PresignHeadObject(ctx, key, expiration)
 }
 
-func (b *cachedBucket) PresignDeleteObject(ctx context.Context, key string) (string, error) {
-	return b.bucket.PresignDeleteObject(ctx, key)
+func (b *cachedBucket) PresignDeleteObject(ctx context.Context, key string, expiration time.Duration) (string, error) {
+	return b.bucket.PresignDeleteObject(ctx, key, expiration)
 }

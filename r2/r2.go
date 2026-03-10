@@ -173,13 +173,13 @@ func (b *Bucket) PresignPutObject(ctx context.Context, key string, expiration ti
 }
 
 // PresignHeadObject generates a presigned URL for getting object metadata.
-func (b *Bucket) PresignHeadObject(ctx context.Context, key string) (string, error) {
-	return b.inner.PresignHeadObject(ctx, key)
+func (b *Bucket) PresignHeadObject(ctx context.Context, key string, expiration time.Duration) (string, error) {
+	return b.inner.PresignHeadObject(ctx, key, expiration)
 }
 
 // PresignDeleteObject generates a presigned URL for deleting an object.
-func (b *Bucket) PresignDeleteObject(ctx context.Context, key string) (string, error) {
-	return b.inner.PresignDeleteObject(ctx, key)
+func (b *Bucket) PresignDeleteObject(ctx context.Context, key string, expiration time.Duration) (string, error) {
+	return b.inner.PresignDeleteObject(ctx, key, expiration)
 }
 
 // Unwrap returns the underlying bucket.

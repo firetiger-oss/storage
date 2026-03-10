@@ -11,12 +11,18 @@ import (
 	"github.com/achille-roussel/kway-go"
 )
 
+// WithOverlay returns an adapter that overlays a read layer under the write layer.
+// Read operations fall back to the read layer when objects are not found in the
+// write layer. Write operations go to the write layer only.
 func WithOverlay(readLayer Bucket) Adapter {
 	return AdapterFunc(func(writeLayer Bucket) Bucket {
 		return Overlay(writeLayer, readLayer)
 	})
 }
 
+// Overlay creates a bucket that combines a write layer and a read layer. Objects
+// are read from the write layer first, falling back to the read layer if not found.
+// All writes go to the write layer. Listings merge objects from both layers.
 func Overlay(writeLayer, readLayer Bucket) Bucket {
 	return &overlayBucket{
 		writeLayer: writeLayer,
@@ -135,10 +141,10 @@ func (o *overlayBucket) PresignPutObject(ctx context.Context, key string, expira
 	return o.writeLayer.PresignPutObject(ctx, key, expiration, options...)
 }
 
-func (o *overlayBucket) PresignHeadObject(ctx context.Context, key string) (string, error) {
-	return o.writeLayer.PresignHeadObject(ctx, key)
+func (o *overlayBucket) PresignHeadObject(ctx context.Context, key string, expiration time.Duration) (string, error) {
+	return o.writeLayer.PresignHeadObject(ctx, key, expiration)
 }
 
-func (o *overlayBucket) PresignDeleteObject(ctx context.Context, key string) (string, error) {
-	return o.writeLayer.PresignDeleteObject(ctx, key)
+func (o *overlayBucket) PresignDeleteObject(ctx context.Context, key string, expiration time.Duration) (string, error) {
+	return o.writeLayer.PresignDeleteObject(ctx, key, expiration)
 }

@@ -139,12 +139,12 @@ func (m *mergedBucket) PresignPutObject(ctx context.Context, key string, expirat
 	return m.buckets[0].PresignPutObject(ctx, key, expiration, options...)
 }
 
-func (m *mergedBucket) PresignHeadObject(ctx context.Context, key string) (string, error) {
-	return m.buckets[0].PresignHeadObject(ctx, key)
+func (m *mergedBucket) PresignHeadObject(ctx context.Context, key string, expiration time.Duration) (string, error) {
+	return m.buckets[0].PresignHeadObject(ctx, key, expiration)
 }
 
-func (m *mergedBucket) PresignDeleteObject(ctx context.Context, key string) (string, error) {
-	return m.buckets[0].PresignDeleteObject(ctx, key)
+func (m *mergedBucket) PresignDeleteObject(ctx context.Context, key string, expiration time.Duration) (string, error) {
+	return m.buckets[0].PresignDeleteObject(ctx, key, expiration)
 }
 
 func compareObjects(a, b Object) int {
