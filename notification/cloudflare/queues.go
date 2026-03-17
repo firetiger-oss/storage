@@ -93,26 +93,33 @@ func NewR2EventHandler(objectHandler notification.ObjectHandler) *R2EventHandler
 
 // Handle processes an R2 event and forwards it to the object handler.
 func (h *R2EventHandler) Handle(ctx context.Context, event R2Event) error {
-	// Build unified event
-	unified := notification.Event{
+	unified, err := convertR2Event(event)
+	if err != nil {
+		return err
+	}
+	return h.objectHandler.HandleEvent(ctx, unified)
+}
+
+// convertR2Event converts an R2Event to a unified notification.Event.
+func convertR2Event(event R2Event) (*notification.Event, error) {
+	unified := &notification.Event{
 		Object: uri.Join("r2", event.Bucket, event.Object.Key),
 		Size:   event.Object.Size,
 		ETag:   event.Object.ETag,
 		Time:   event.EventTime,
 	}
 
-	// Determine event type from action
 	switch event.Action {
 	case "PutObject", "CopyObject", "CompleteMultipartUpload":
 		unified.Type = notification.ObjectCreated
 	case "DeleteObject", "LifecycleDeletion":
 		unified.Type = notification.ObjectDeleted
 	default:
-		return fmt.Errorf("%w: unsupported R2 action %q",
+		return nil, fmt.Errorf("%w: unsupported R2 action %q",
 			notification.ErrInvalidEvent, event.Action)
 	}
 
-	return h.objectHandler.HandleEvent(ctx, &unified)
+	return unified, nil
 }
 
 // NewQueuesHandler creates an http.Handler that receives R2 bucket notifications
@@ -175,6 +182,42 @@ func NewBatchQueuesHandler(objectHandler notification.ObjectHandler) http.Handle
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
+		}
+	})
+}
+
+// NewBatchQueuesEventBatchHandler creates an http.Handler that receives batches
+// of R2 events and forwards them as a batch to a BatchObjectHandler.
+//
+// Unlike NewBatchQueuesHandler which processes events individually and concurrently,
+// this handler converts all events and delivers them as a single batch call,
+// enabling batch DB writes and cross-event deduplication.
+func NewBatchQueuesEventBatchHandler(handler notification.BatchObjectHandler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		var r2Events []R2Event
+		if err := json.NewDecoder(r.Body).Decode(&r2Events); err != nil {
+			http.Error(w, "failed to parse events: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		events := make([]*notification.Event, 0, len(r2Events))
+		for _, r2Event := range r2Events {
+			unified, err := convertR2Event(r2Event)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			events = append(events, unified)
+		}
+
+		if err := handler.HandleEventBatch(r.Context(), events); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
 		}
 	})
 }

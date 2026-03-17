@@ -415,6 +415,98 @@ func TestWithFiltersMultipleFilters(t *testing.T) {
 	}
 }
 
+func TestWithBatchFiltersPassing(t *testing.T) {
+	var received []*notification.Event
+	handler := notification.BatchObjectHandlerFunc(func(ctx context.Context, events []*notification.Event) error {
+		received = events
+		return nil
+	})
+
+	wrapped := notification.WithBatchFilters(handler,
+		notification.FilterEventType(notification.ObjectCreated),
+	)
+
+	events := []*notification.Event{
+		{Type: notification.ObjectCreated, Object: uri.Join("s3", "bucket", "file1.txt")},
+		{Type: notification.ObjectDeleted, Object: uri.Join("s3", "bucket", "file2.txt")},
+		{Type: notification.ObjectCreated, Object: uri.Join("s3", "bucket", "file3.txt")},
+	}
+
+	err := wrapped.HandleEventBatch(context.Background(), events)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(received) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(received))
+	}
+	if received[0].Object != uri.Join("s3", "bucket", "file1.txt") {
+		t.Errorf("expected file1.txt, got %s", received[0].Object)
+	}
+	if received[1].Object != uri.Join("s3", "bucket", "file3.txt") {
+		t.Errorf("expected file3.txt, got %s", received[1].Object)
+	}
+}
+
+func TestWithBatchFiltersAllFiltered(t *testing.T) {
+	handlerCalled := false
+	handler := notification.BatchObjectHandlerFunc(func(ctx context.Context, events []*notification.Event) error {
+		handlerCalled = true
+		return nil
+	})
+
+	wrapped := notification.WithBatchFilters(handler,
+		notification.FilterEventType(notification.ObjectCreated),
+	)
+
+	events := []*notification.Event{
+		{Type: notification.ObjectDeleted, Object: uri.Join("s3", "bucket", "file1.txt")},
+		{Type: notification.ObjectDeleted, Object: uri.Join("s3", "bucket", "file2.txt")},
+	}
+
+	err := wrapped.HandleEventBatch(context.Background(), events)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if handlerCalled {
+		t.Error("handler should not be called when all events are filtered out")
+	}
+}
+
+func TestWithBatchFiltersError(t *testing.T) {
+	handler := notification.BatchObjectHandlerFunc(func(ctx context.Context, events []*notification.Event) error {
+		return nil
+	})
+
+	expectedErr := errors.New("filter error")
+	errorFilter := func(ctx context.Context, event *notification.Event) (bool, error) {
+		return false, expectedErr
+	}
+
+	wrapped := notification.WithBatchFilters(handler, errorFilter)
+
+	events := []*notification.Event{
+		{Type: notification.ObjectCreated, Object: uri.Join("s3", "bucket", "file1.txt")},
+	}
+
+	err := wrapped.HandleEventBatch(context.Background(), events)
+	if err != expectedErr {
+		t.Errorf("expected error %v, got %v", expectedErr, err)
+	}
+}
+
+func TestWithBatchFiltersNoFilters(t *testing.T) {
+	handler := notification.BatchObjectHandlerFunc(func(ctx context.Context, events []*notification.Event) error {
+		return nil
+	})
+
+	wrapped := notification.WithBatchFilters(handler)
+	if wrapped != notification.BatchObjectHandler(handler) {
+		t.Error("expected WithBatchFilters to return handler directly when no filters")
+	}
+}
+
 // trackingBucket wraps a bucket to track GetObject calls
 type trackingBucket struct {
 	storage.Bucket

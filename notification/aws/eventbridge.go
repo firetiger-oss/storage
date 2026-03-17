@@ -211,8 +211,16 @@ func (h *S3LambdaHandler) HandleEvent(ctx context.Context, event S3Event) error 
 
 // HandleRecord processes a single S3EventRecord and converts it to notification.Event.
 func (h *S3LambdaHandler) HandleRecord(ctx context.Context, record S3EventRecord) error {
-	// Convert to unified event format
-	unified := notification.Event{
+	unified, err := convertS3Record(record)
+	if err != nil {
+		return err
+	}
+	return h.objectHandler.HandleEvent(ctx, unified)
+}
+
+// convertS3Record converts an S3EventRecord to a unified notification.Event.
+func convertS3Record(record S3EventRecord) (*notification.Event, error) {
+	unified := &notification.Event{
 		Object: uri.Join("s3", record.S3.Bucket.Name, record.S3.Object.Key),
 		Size:   record.S3.Object.Size,
 		ETag:   record.S3.Object.ETag,
@@ -220,16 +228,47 @@ func (h *S3LambdaHandler) HandleRecord(ctx context.Context, record S3EventRecord
 		Time:   record.EventTime,
 	}
 
-	// Determine event type from event name
 	switch {
 	case strings.HasPrefix(record.EventName, "s3:ObjectCreated:"):
 		unified.Type = notification.ObjectCreated
 	case strings.HasPrefix(record.EventName, "s3:ObjectRemoved:"):
 		unified.Type = notification.ObjectDeleted
 	default:
-		return fmt.Errorf("%w: unsupported S3 event name %q",
+		return nil, fmt.Errorf("%w: unsupported S3 event name %q",
 			notification.ErrInvalidEvent, record.EventName)
 	}
 
-	return h.objectHandler.HandleEvent(ctx, &unified)
+	return unified, nil
+}
+
+// S3LambdaBatchHandler handles direct S3 Lambda events and forwards all records
+// as a single batch to a BatchObjectHandler.
+//
+// Unlike S3LambdaHandler which processes records individually and concurrently,
+// this handler converts all records to notification events and delivers them
+// as a batch, enabling batch DB writes and cross-event deduplication.
+type S3LambdaBatchHandler struct {
+	batchHandler notification.BatchObjectHandler
+}
+
+// NewS3LambdaBatchHandler creates a handler for direct S3 Lambda notifications
+// that delivers all records as a batch.
+func NewS3LambdaBatchHandler(handler notification.BatchObjectHandler) *S3LambdaBatchHandler {
+	return &S3LambdaBatchHandler{
+		batchHandler: handler,
+	}
+}
+
+// HandleEvent converts all S3EventRecords to notification events and calls
+// HandleEventBatch with the complete batch.
+func (h *S3LambdaBatchHandler) HandleEvent(ctx context.Context, event S3Event) error {
+	events := make([]*notification.Event, 0, len(event.Records))
+	for _, record := range event.Records {
+		unified, err := convertS3Record(record)
+		if err != nil {
+			return err
+		}
+		events = append(events, unified)
+	}
+	return h.batchHandler.HandleEventBatch(ctx, events)
 }

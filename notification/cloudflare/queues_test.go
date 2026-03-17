@@ -332,3 +332,69 @@ func TestBatchQueuesHandler(t *testing.T) {
 		}
 	})
 }
+
+func TestBatchQueuesEventBatchHandler(t *testing.T) {
+	var received []*notification.Event
+	batchHandler := notification.BatchObjectHandlerFunc(func(ctx context.Context, events []*notification.Event) error {
+		received = events
+		return nil
+	})
+
+	handler := NewBatchQueuesEventBatchHandler(batchHandler)
+
+	events := []R2Event{
+		{
+			Account: "test-account",
+			Action:  "PutObject",
+			Bucket:  "my-bucket",
+			Object:  R2Object{Key: "file1.txt", Size: 100},
+		},
+		{
+			Account: "test-account",
+			Action:  "DeleteObject",
+			Bucket:  "my-bucket",
+			Object:  R2Object{Key: "file2.txt"},
+		},
+	}
+	body, _ := json.Marshal(events)
+
+	req := httptest.NewRequest(http.MethodPost, "/webhook", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if len(received) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(received))
+	}
+	if received[0].Type != notification.ObjectCreated {
+		t.Errorf("expected first event ObjectCreated, got %s", received[0].Type)
+	}
+	if received[1].Type != notification.ObjectDeleted {
+		t.Errorf("expected second event ObjectDeleted, got %s", received[1].Type)
+	}
+}
+
+func TestBatchQueuesEventBatchHandlerError(t *testing.T) {
+	batchHandler := notification.BatchObjectHandlerFunc(func(ctx context.Context, events []*notification.Event) error {
+		return errors.New("batch failed")
+	})
+
+	handler := NewBatchQueuesEventBatchHandler(batchHandler)
+
+	events := []R2Event{
+		{Action: "PutObject", Bucket: "bucket", Object: R2Object{Key: "file.txt"}},
+	}
+	body, _ := json.Marshal(events)
+
+	req := httptest.NewRequest(http.MethodPost, "/webhook", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("expected status 500, got %d", rec.Code)
+	}
+}

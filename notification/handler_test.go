@@ -313,6 +313,63 @@ func TestObjectConsumer(t *testing.T) {
 	}
 }
 
+func TestBatchObjectHandlerFuncHandleEvent(t *testing.T) {
+	var received []*notification.Event
+	handler := notification.BatchObjectHandlerFunc(func(ctx context.Context, events []*notification.Event) error {
+		received = events
+		return nil
+	})
+
+	event := &notification.Event{
+		Type:   notification.ObjectCreated,
+		Object: uri.Join("s3", "bucket", "file.txt"),
+	}
+
+	err := handler.HandleEvent(context.Background(), event)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(received) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(received))
+	}
+	if received[0] != event {
+		t.Error("expected the same event pointer")
+	}
+}
+
+func TestBatchObjectHandlerFuncHandleEventBatch(t *testing.T) {
+	var received []*notification.Event
+	handler := notification.BatchObjectHandlerFunc(func(ctx context.Context, events []*notification.Event) error {
+		received = events
+		return nil
+	})
+
+	events := []*notification.Event{
+		{Type: notification.ObjectCreated, Object: uri.Join("s3", "bucket", "file1.txt")},
+		{Type: notification.ObjectDeleted, Object: uri.Join("s3", "bucket", "file2.txt")},
+	}
+
+	err := handler.HandleEventBatch(context.Background(), events)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(received) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(received))
+	}
+}
+
+func TestBatchObjectHandlerFuncImplementsBothInterfaces(t *testing.T) {
+	var handler notification.BatchObjectHandlerFunc = func(ctx context.Context, events []*notification.Event) error {
+		return nil
+	}
+
+	// Compile-time verification that both interfaces are satisfied.
+	var _ notification.ObjectHandler = handler
+	var _ notification.BatchObjectHandler = handler
+}
+
 func TestObjectHandlerDeleteAfterProcessingOnlyOnSuccess(t *testing.T) {
 	bucket := memory.NewBucket(&memory.Entry{
 		Key:   "test/file.txt",

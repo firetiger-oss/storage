@@ -54,3 +54,23 @@ type ObjectHandlerFunc func(context.Context, *Event) error
 func (f ObjectHandlerFunc) HandleEvent(ctx context.Context, event *Event) error {
 	return f(ctx, event)
 }
+
+// BatchObjectHandler processes batches of storage notification events.
+type BatchObjectHandler interface {
+	HandleEventBatch(ctx context.Context, events []*Event) error
+}
+
+// BatchObjectHandlerFunc implements both ObjectHandler and BatchObjectHandler.
+// For single events (HandleEvent), wraps the event in a single-element slice.
+type BatchObjectHandlerFunc func(context.Context, []*Event) error
+
+// HandleEvent implements the ObjectHandler interface by wrapping the event
+// in a single-element slice and delegating to the batch function.
+func (f BatchObjectHandlerFunc) HandleEvent(ctx context.Context, event *Event) error {
+	return f(ctx, []*Event{event})
+}
+
+// HandleEventBatch implements the BatchObjectHandler interface.
+func (f BatchObjectHandlerFunc) HandleEventBatch(ctx context.Context, events []*Event) error {
+	return f(ctx, events)
+}
