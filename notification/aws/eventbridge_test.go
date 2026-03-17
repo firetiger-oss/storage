@@ -45,7 +45,7 @@ func TestS3EventHandlerObjectCreated(t *testing.T) {
 		},
 	}
 
-	err := handler.Handle(context.Background(), event)
+	err := handler.Handle(t.Context(), event)
 	if err != nil {
 		t.Fatalf("Handle failed: %v", err)
 	}
@@ -89,7 +89,7 @@ func TestS3EventHandlerObjectDeleted(t *testing.T) {
 		},
 	}
 
-	err := handler.Handle(context.Background(), event)
+	err := handler.Handle(t.Context(), event)
 	if err != nil {
 		t.Fatalf("Handle failed: %v", err)
 	}
@@ -111,7 +111,7 @@ func TestS3EventHandlerUnsupportedEventType(t *testing.T) {
 		Source:     "aws.s3",
 	}
 
-	err := handler.Handle(context.Background(), event)
+	err := handler.Handle(t.Context(), event)
 	if err == nil {
 		t.Fatal("expected error for unsupported event type")
 	}
@@ -119,7 +119,7 @@ func TestS3EventHandlerUnsupportedEventType(t *testing.T) {
 
 func TestNewS3EventBridgeHandler(t *testing.T) {
 	bucket := memory.NewBucket()
-	_, err := bucket.PutObject(context.Background(), "test.txt",
+	_, err := bucket.PutObject(t.Context(), "test.txt",
 		strings.NewReader("hello world"),
 		storage.ContentType("text/plain"),
 	)
@@ -230,7 +230,7 @@ func TestS3LambdaHandlerObjectCreated(t *testing.T) {
 		}},
 	}
 
-	err := handler.HandleEvent(context.Background(), s3Event)
+	err := handler.HandleEvent(t.Context(), s3Event)
 	if err != nil {
 		t.Fatalf("HandleEvent failed: %v", err)
 	}
@@ -281,7 +281,7 @@ func TestS3LambdaHandlerObjectDeleted(t *testing.T) {
 		}},
 	}
 
-	err := handler.HandleEvent(context.Background(), s3Event)
+	err := handler.HandleEvent(t.Context(), s3Event)
 	if err != nil {
 		t.Fatalf("HandleEvent failed: %v", err)
 	}
@@ -323,7 +323,7 @@ func TestS3LambdaHandlerMultipleRecords(t *testing.T) {
 		},
 	}
 
-	err := handler.HandleEvent(context.Background(), s3Event)
+	err := handler.HandleEvent(t.Context(), s3Event)
 	if err != nil {
 		t.Fatalf("HandleEvent failed: %v", err)
 	}
@@ -358,7 +358,7 @@ func TestS3LambdaHandlerUnsupportedEventName(t *testing.T) {
 		}},
 	}
 
-	err := handler.HandleEvent(context.Background(), s3Event)
+	err := handler.HandleEvent(t.Context(), s3Event)
 	if err == nil {
 		t.Fatal("expected error for unsupported event name")
 	}
@@ -390,7 +390,7 @@ func TestS3LambdaHandlerUnsupportedEventInBatch(t *testing.T) {
 		},
 	}
 
-	err := handler.HandleEvent(context.Background(), s3Event)
+	err := handler.HandleEvent(t.Context(), s3Event)
 	if err == nil {
 		t.Fatal("expected error for unsupported event name")
 	}

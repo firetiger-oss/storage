@@ -114,7 +114,7 @@ func TestR2EventHandler(t *testing.T) {
 					return nil
 				}))
 
-			err := handler.Handle(context.Background(), tt.event)
+			err := handler.Handle(t.Context(), tt.event)
 
 			if tt.expectedError {
 				if err == nil {

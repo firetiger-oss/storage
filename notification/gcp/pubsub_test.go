@@ -38,7 +38,7 @@ func TestBucketNotificationHandlerObjectFinalize(t *testing.T) {
 		PublishTime: "2025-01-15T10:30:00Z",
 	}
 
-	err := handler.Handle(context.Background(), msg)
+	err := handler.Handle(t.Context(), msg)
 	if err != nil {
 		t.Fatalf("Handle failed: %v", err)
 	}
@@ -71,7 +71,7 @@ func TestBucketNotificationHandlerObjectDelete(t *testing.T) {
 		PublishTime: "2025-01-15T10:30:00Z",
 	}
 
-	err := handler.Handle(context.Background(), msg)
+	err := handler.Handle(t.Context(), msg)
 	if err != nil {
 		t.Fatalf("Handle failed: %v", err)
 	}
@@ -100,7 +100,7 @@ func TestBucketNotificationHandlerObjectArchive(t *testing.T) {
 		PublishTime: "2025-01-15T10:30:00Z",
 	}
 
-	err := handler.Handle(context.Background(), msg)
+	err := handler.Handle(t.Context(), msg)
 	if err != nil {
 		t.Fatalf("Handle failed: %v", err)
 	}
@@ -135,7 +135,7 @@ func TestBucketNotificationHandlerWithMetadata(t *testing.T) {
 		PublishTime: "2025-01-15T10:30:00Z",
 	}
 
-	err := handler.Handle(context.Background(), msg)
+	err := handler.Handle(t.Context(), msg)
 	if err != nil {
 		t.Fatalf("Handle failed: %v", err)
 	}
@@ -163,7 +163,7 @@ func TestBucketNotificationHandlerMissingAttributes(t *testing.T) {
 		},
 	}
 
-	err := handler.Handle(context.Background(), msg)
+	err := handler.Handle(t.Context(), msg)
 	if err == nil {
 		t.Fatal("expected error for missing bucketId")
 	}
@@ -184,7 +184,7 @@ func TestBucketNotificationHandlerUnsupportedEventType(t *testing.T) {
 		},
 	}
 
-	err := handler.Handle(context.Background(), msg)
+	err := handler.Handle(t.Context(), msg)
 	if err == nil {
 		t.Fatal("expected error for unsupported event type")
 	}
@@ -192,7 +192,7 @@ func TestBucketNotificationHandlerUnsupportedEventType(t *testing.T) {
 
 func TestNewPubSubHandler(t *testing.T) {
 	bucket := memory.NewBucket()
-	_, err := bucket.PutObject(context.Background(), "test.txt",
+	_, err := bucket.PutObject(t.Context(), "test.txt",
 		strings.NewReader("hello gcs"),
 		storage.ContentType("text/plain"),
 	)
