@@ -211,15 +211,15 @@ func (h *S3LambdaHandler) HandleEvent(ctx context.Context, event S3Event) error 
 
 // HandleRecord processes a single S3EventRecord and converts it to notification.Event.
 func (h *S3LambdaHandler) HandleRecord(ctx context.Context, record S3EventRecord) error {
-	unified, err := convertS3Record(record)
+	unified, err := eventFromS3Record(record)
 	if err != nil {
 		return err
 	}
 	return h.objectHandler.HandleEvent(ctx, unified)
 }
 
-// convertS3Record converts an S3EventRecord to a unified notification.Event.
-func convertS3Record(record S3EventRecord) (*notification.Event, error) {
+// eventFromS3Record converts an S3EventRecord to a unified notification.Event.
+func eventFromS3Record(record S3EventRecord) (*notification.Event, error) {
 	unified := &notification.Event{
 		Object: uri.Join("s3", record.S3.Bucket.Name, record.S3.Object.Key),
 		Size:   record.S3.Object.Size,
@@ -264,7 +264,7 @@ func NewS3LambdaBatchHandler(handler notification.BatchObjectHandler) *S3LambdaB
 func (h *S3LambdaBatchHandler) HandleEvent(ctx context.Context, event S3Event) error {
 	events := make([]*notification.Event, 0, len(event.Records))
 	for _, record := range event.Records {
-		unified, err := convertS3Record(record)
+		unified, err := eventFromS3Record(record)
 		if err != nil {
 			return err
 		}

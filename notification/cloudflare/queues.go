@@ -93,15 +93,15 @@ func NewR2EventHandler(objectHandler notification.ObjectHandler) *R2EventHandler
 
 // Handle processes an R2 event and forwards it to the object handler.
 func (h *R2EventHandler) Handle(ctx context.Context, event R2Event) error {
-	unified, err := convertR2Event(event)
+	unified, err := eventFromR2Event(event)
 	if err != nil {
 		return err
 	}
 	return h.objectHandler.HandleEvent(ctx, unified)
 }
 
-// convertR2Event converts an R2Event to a unified notification.Event.
-func convertR2Event(event R2Event) (*notification.Event, error) {
+// eventFromR2Event converts an R2Event to a unified notification.Event.
+func eventFromR2Event(event R2Event) (*notification.Event, error) {
 	unified := &notification.Event{
 		Object: uri.Join("r2", event.Bucket, event.Object.Key),
 		Size:   event.Object.Size,
@@ -207,7 +207,7 @@ func NewBatchQueuesEventBatchHandler(handler notification.BatchObjectHandler) ht
 
 		events := make([]*notification.Event, 0, len(r2Events))
 		for _, r2Event := range r2Events {
-			unified, err := convertR2Event(r2Event)
+			unified, err := eventFromR2Event(r2Event)
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
