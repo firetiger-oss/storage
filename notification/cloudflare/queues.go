@@ -25,11 +25,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"iter"
 	"net/http"
 	"time"
 
-	"github.com/firetiger-oss/concurrent"
 	"github.com/firetiger-oss/storage/notification"
 	"github.com/firetiger-oss/storage/uri"
 )
@@ -93,26 +91,33 @@ func NewR2EventHandler(objectHandler notification.ObjectHandler) *R2EventHandler
 
 // Handle processes an R2 event and forwards it to the object handler.
 func (h *R2EventHandler) Handle(ctx context.Context, event R2Event) error {
-	// Build unified event
-	unified := notification.Event{
+	unified, err := eventFromR2Event(event)
+	if err != nil {
+		return err
+	}
+	return h.objectHandler.HandleEvents(ctx, unified)
+}
+
+// eventFromR2Event converts an R2Event to a unified notification.Event.
+func eventFromR2Event(event R2Event) (*notification.Event, error) {
+	unified := &notification.Event{
 		Object: uri.Join("r2", event.Bucket, event.Object.Key),
 		Size:   event.Object.Size,
 		ETag:   event.Object.ETag,
 		Time:   event.EventTime,
 	}
 
-	// Determine event type from action
 	switch event.Action {
 	case "PutObject", "CopyObject", "CompleteMultipartUpload":
 		unified.Type = notification.ObjectCreated
 	case "DeleteObject", "LifecycleDeletion":
 		unified.Type = notification.ObjectDeleted
 	default:
-		return fmt.Errorf("%w: unsupported R2 action %q",
+		return nil, fmt.Errorf("%w: unsupported R2 action %q",
 			notification.ErrInvalidEvent, event.Action)
 	}
 
-	return h.objectHandler.HandleEvent(ctx, &unified)
+	return unified, nil
 }
 
 // NewQueuesHandler creates an http.Handler that receives R2 bucket notifications
@@ -149,68 +154,37 @@ func NewQueuesHandler(objectHandler notification.ObjectHandler) http.Handler {
 	})
 }
 
-// NewBatchQueuesHandler creates an http.Handler that receives batches of R2 events.
+// NewBatchQueuesHandler creates an http.Handler that receives batches of R2 events
+// and forwards them as a single batch to the ObjectHandler.
 //
-// This is useful when the Worker forwards multiple events in a single request
-// to reduce HTTP overhead. The expected request body is an array of R2Event objects.
-//
-// Events are processed concurrently using the context's concurrency limit.
-// Use concurrent.WithLimit to control parallelism.
+// The expected request body is an array of R2Event objects. All events are converted
+// and delivered as a single HandleEvents call.
 func NewBatchQueuesHandler(objectHandler notification.ObjectHandler) http.Handler {
-	handler := NewR2EventHandler(objectHandler)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
 
-		events := decodeEventArray(json.NewDecoder(r.Body))
+		var r2Events []R2Event
+		if err := json.NewDecoder(r.Body).Decode(&r2Events); err != nil {
+			http.Error(w, "failed to parse events: "+err.Error(), http.StatusBadRequest)
+			return
+		}
 
-		for _, err := range concurrent.Pipeline(r.Context(), events,
-			func(ctx context.Context, event R2Event) (struct{}, error) {
-				return struct{}{}, handler.Handle(ctx, event)
-			},
-		) {
+		events := make([]*notification.Event, 0, len(r2Events))
+		for _, r2Event := range r2Events {
+			unified, err := eventFromR2Event(r2Event)
 			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
+				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
+			events = append(events, unified)
+		}
+
+		if err := objectHandler.HandleEvents(r.Context(), events...); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
 		}
 	})
-}
-
-// decodeEventArray streams R2Event objects from a JSON array using a decoder.
-func decodeEventArray(dec *json.Decoder) iter.Seq2[R2Event, error] {
-	return func(yield func(R2Event, error) bool) {
-		token, err := dec.Token()
-		if err != nil {
-			yield(R2Event{}, fmt.Errorf("failed to read opening bracket: %w", err))
-			return
-		}
-		if delim, ok := token.(json.Delim); !ok || delim != '[' {
-			yield(R2Event{}, fmt.Errorf("expected '[', got %v", token))
-			return
-		}
-
-		for dec.More() {
-			var event R2Event
-			if err := dec.Decode(&event); err != nil {
-				yield(R2Event{}, fmt.Errorf("failed to decode event: %w", err))
-				return
-			}
-			if !yield(event, nil) {
-				return
-			}
-		}
-
-		token, err = dec.Token()
-		if err != nil {
-			yield(R2Event{}, fmt.Errorf("failed to read closing bracket: %w", err))
-			return
-		}
-		if delim, ok := token.(json.Delim); !ok || delim != ']' {
-			yield(R2Event{}, fmt.Errorf("expected ']', got %v", token))
-			return
-		}
-	}
 }

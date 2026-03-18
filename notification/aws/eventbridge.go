@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/firetiger-oss/concurrent"
 	"github.com/firetiger-oss/storage/notification"
 	"github.com/firetiger-oss/storage/uri"
 )
@@ -90,7 +89,7 @@ func (h *S3EventHandler) Handle(ctx context.Context, event EventBridgeEvent[S3Ev
 			notification.ErrInvalidEvent, event.DetailType)
 	}
 
-	return h.objectHandler.HandleEvent(ctx, &unified)
+	return h.objectHandler.HandleEvents(ctx, &unified)
 }
 
 // NewS3EventBridgeHandler creates an http.Handler that receives S3 EventBridge
@@ -166,33 +165,8 @@ type S3Object struct {
 // This handler is designed for AWS Lambda functions that receive S3 events directly
 // (not through EventBridge).
 //
-// Usage Example:
-//
-//	package main
-//
-//	import (
-//	    "context"
-//	    "log"
-//
-//	    "github.com/aws/aws-lambda-go/lambda"
-//	    "github.com/firetiger-oss/storage/notification"
-//	    "github.com/firetiger-oss/storage/notification/aws"
-//	)
-//
-//	func main() {
-//	    objectHandler := notification.ObjectHandlerFunc(func(ctx context.Context, event *notification.Event) error {
-//	        log.Printf("Processing: %s/%s", event.Bucket, event.Key)
-//	        return nil
-//	    })
-//
-//	    handler := aws.NewS3LambdaHandler(objectHandler)
-//	    lambda.Start(handler.HandleEvent)
-//	}
-//
-// The handler processes all records concurrently. Each record is converted to
-// a notification.Event with Type set based on the EventName prefix:
-//   - "s3:ObjectCreated:" → ObjectCreated
-//   - "s3:ObjectRemoved:" → ObjectDeleted
+// The handler converts all records to notification events and passes them as a batch
+// to HandleEvents, giving the handler full control over processing strategy.
 type S3LambdaHandler struct {
 	objectHandler notification.ObjectHandler
 }
@@ -204,15 +178,23 @@ func NewS3LambdaHandler(objectHandler notification.ObjectHandler) *S3LambdaHandl
 	}
 }
 
-// HandleEvent processes all records in an S3Event concurrently.
+// HandleEvent converts all S3EventRecords to notification events and calls
+// HandleEvents with the complete batch.
 func (h *S3LambdaHandler) HandleEvent(ctx context.Context, event S3Event) error {
-	return concurrent.RunTasks(ctx, event.Records, h.HandleRecord)
+	events := make([]*notification.Event, 0, len(event.Records))
+	for _, record := range event.Records {
+		unified, err := eventFromS3Record(record)
+		if err != nil {
+			return err
+		}
+		events = append(events, unified)
+	}
+	return h.objectHandler.HandleEvents(ctx, events...)
 }
 
-// HandleRecord processes a single S3EventRecord and converts it to notification.Event.
-func (h *S3LambdaHandler) HandleRecord(ctx context.Context, record S3EventRecord) error {
-	// Convert to unified event format
-	unified := notification.Event{
+// eventFromS3Record converts an S3EventRecord to a unified notification.Event.
+func eventFromS3Record(record S3EventRecord) (*notification.Event, error) {
+	unified := &notification.Event{
 		Object: uri.Join("s3", record.S3.Bucket.Name, record.S3.Object.Key),
 		Size:   record.S3.Object.Size,
 		ETag:   record.S3.Object.ETag,
@@ -220,16 +202,15 @@ func (h *S3LambdaHandler) HandleRecord(ctx context.Context, record S3EventRecord
 		Time:   record.EventTime,
 	}
 
-	// Determine event type from event name
 	switch {
 	case strings.HasPrefix(record.EventName, "s3:ObjectCreated:"):
 		unified.Type = notification.ObjectCreated
 	case strings.HasPrefix(record.EventName, "s3:ObjectRemoved:"):
 		unified.Type = notification.ObjectDeleted
 	default:
-		return fmt.Errorf("%w: unsupported S3 event name %q",
+		return nil, fmt.Errorf("%w: unsupported S3 event name %q",
 			notification.ErrInvalidEvent, record.EventName)
 	}
 
-	return h.objectHandler.HandleEvent(ctx, &unified)
+	return unified, nil
 }

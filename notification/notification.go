@@ -38,19 +38,16 @@ type Event struct {
 	Region string
 }
 
-// ObjectHandler processes storage notification events by forwarding them
-// as HTTP requests to an underlying http.Handler.
+// ObjectHandler processes storage notification events.
 type ObjectHandler interface {
-	// HandleEvent processes a storage notification event.
-	// For create events, it fetches the object content and forwards it as a POST request.
-	// For delete events, it forwards a DELETE request without a body.
-	HandleEvent(ctx context.Context, event *Event) error
+	// HandleEvents processes one or more storage notification events.
+	HandleEvents(ctx context.Context, events ...*Event) error
 }
 
 // ObjectHandlerFunc is a function adapter that implements ObjectHandler.
-type ObjectHandlerFunc func(context.Context, *Event) error
+type ObjectHandlerFunc func(context.Context, ...*Event) error
 
-// HandleEvent implements the ObjectHandler interface.
-func (f ObjectHandlerFunc) HandleEvent(ctx context.Context, event *Event) error {
-	return f(ctx, event)
+// HandleEvents implements the ObjectHandler interface.
+func (f ObjectHandlerFunc) HandleEvents(ctx context.Context, events ...*Event) error {
+	return f(ctx, events...)
 }

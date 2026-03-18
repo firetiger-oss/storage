@@ -37,31 +37,43 @@ func FilterEventType(types ...EventType) Filter {
 }
 
 // NewCreateObjectHandler creates an ObjectHandler that only processes ObjectCreated events.
-func NewCreateObjectHandler(fn func(context.Context, *Event) error) ObjectHandler {
+func NewCreateObjectHandler(fn func(context.Context, ...*Event) error) ObjectHandler {
 	return WithFilters(ObjectHandlerFunc(fn), FilterEventType(ObjectCreated))
 }
 
 // NewDeleteObjectHandler creates an ObjectHandler that only processes ObjectDeleted events.
-func NewDeleteObjectHandler(fn func(context.Context, *Event) error) ObjectHandler {
+func NewDeleteObjectHandler(fn func(context.Context, ...*Event) error) ObjectHandler {
 	return WithFilters(ObjectHandlerFunc(fn), FilterEventType(ObjectDeleted))
 }
 
 // WithFilters wraps an ObjectHandler to apply filters before processing.
-// All filters must pass for the event to be handled.
+// Events that don't pass all filters are removed from the batch.
+// If no events remain after filtering, the handler is not called.
 func WithFilters(handler ObjectHandler, filters ...Filter) ObjectHandler {
 	if len(filters) == 0 {
 		return handler
 	}
-	return ObjectHandlerFunc(func(ctx context.Context, event *Event) error {
-		for _, filter := range filters {
-			ok, err := filter(ctx, event)
-			if err != nil {
-				return err
+	return ObjectHandlerFunc(func(ctx context.Context, events ...*Event) error {
+		filtered := make([]*Event, 0, len(events))
+		for _, event := range events {
+			pass := true
+			for _, filter := range filters {
+				ok, err := filter(ctx, event)
+				if err != nil {
+					return err
+				}
+				if !ok {
+					pass = false
+					break
+				}
 			}
-			if !ok {
-				return nil
+			if pass {
+				filtered = append(filtered, event)
 			}
 		}
-		return handler.HandleEvent(ctx, event)
+		if len(filtered) == 0 {
+			return nil
+		}
+		return handler.HandleEvents(ctx, filtered...)
 	})
 }

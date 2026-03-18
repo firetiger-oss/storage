@@ -23,7 +23,7 @@ func TestObjectHandlerCreateEvent(t *testing.T) {
 	})
 
 	// Add content type via PutObject
-	_, err := bucket.PutObject(context.Background(), "path/to/object.json",
+	_, err := bucket.PutObject(t.Context(), "path/to/object.json",
 		strings.NewReader(`{"hello":"world"}`),
 		storage.ContentType("application/json"),
 	)
@@ -61,9 +61,9 @@ func TestObjectHandlerCreateEvent(t *testing.T) {
 		Time:   time.Now(),
 	}
 
-	err = objectHandler.HandleEvent(context.Background(), &event)
+	err = objectHandler.HandleEvents(t.Context(), &event)
 	if err != nil {
-		t.Fatalf("HandleEvent failed: %v", err)
+		t.Fatalf("HandleEvents failed: %v", err)
 	}
 
 	// Verify the HTTP request
@@ -111,9 +111,9 @@ func TestObjectHandlerDeleteEvent(t *testing.T) {
 		Time:   time.Now(),
 	}
 
-	err := objectHandler.HandleEvent(context.Background(), &event)
+	err := objectHandler.HandleEvents(t.Context(), &event)
 	if err != nil {
-		t.Fatalf("HandleEvent failed: %v", err)
+		t.Fatalf("HandleEvents failed: %v", err)
 	}
 
 	// Verify the HTTP request
@@ -149,7 +149,7 @@ func TestObjectHandlerHandlerError(t *testing.T) {
 		Object: uri.Join("s3", "test-bucket", "test.txt"),
 	}
 
-	err := objectHandler.HandleEvent(context.Background(), &event)
+	err := objectHandler.HandleEvents(t.Context(), &event)
 	if err == nil {
 		t.Fatal("expected error for handler failure")
 	}
@@ -176,7 +176,7 @@ func TestObjectHandlerObjectNotFound(t *testing.T) {
 		Object: uri.Join("s3", "test-bucket", "nonexistent.txt"),
 	}
 
-	err := objectHandler.HandleEvent(context.Background(), &event)
+	err := objectHandler.HandleEvents(t.Context(), &event)
 	if err == nil {
 		t.Fatal("expected error for object not found")
 	}
@@ -187,7 +187,7 @@ func TestObjectHandlerObjectNotFound(t *testing.T) {
 
 func TestObjectHandlerEventHeaders(t *testing.T) {
 	bucket := memory.NewBucket()
-	_, err := bucket.PutObject(context.Background(), "test.txt",
+	_, err := bucket.PutObject(t.Context(), "test.txt",
 		strings.NewReader("content"),
 		storage.ContentType("text/plain"),
 		storage.Metadata("custom-key", "custom-value"),
@@ -216,9 +216,9 @@ func TestObjectHandlerEventHeaders(t *testing.T) {
 		Time:   eventTime,
 	}
 
-	err = objectHandler.HandleEvent(context.Background(), &event)
+	err = objectHandler.HandleEvents(t.Context(), &event)
 	if err != nil {
-		t.Fatalf("HandleEvent failed: %v", err)
+		t.Fatalf("HandleEvents failed: %v", err)
 	}
 
 	if headers.Get("X-Event-Source") != "s3" {
@@ -259,7 +259,7 @@ func TestObjectHandlerDeleteAfterProcessing(t *testing.T) {
 		Object: uri.Join("s3", "test-bucket", "test/file.txt"),
 	}
 
-	err := handler.HandleEvent(t.Context(), event)
+	err := handler.HandleEvents(t.Context(), event)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -298,7 +298,7 @@ func TestObjectConsumer(t *testing.T) {
 		Object: uri.Join("s3", "test-bucket", "consume/data.json"),
 	}
 
-	err := handler.HandleEvent(t.Context(), event)
+	err := handler.HandleEvents(t.Context(), event)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -310,6 +310,53 @@ func TestObjectConsumer(t *testing.T) {
 	_, _, err = bucket.GetObject(t.Context(), "consume/data.json")
 	if !errors.Is(err, storage.ErrObjectNotFound) {
 		t.Errorf("expected object to be deleted after consumption, got error: %v", err)
+	}
+}
+
+func TestObjectHandlerFuncVariadic(t *testing.T) {
+	var received []*notification.Event
+	handler := notification.ObjectHandlerFunc(func(ctx context.Context, events ...*notification.Event) error {
+		received = events
+		return nil
+	})
+
+	events := []*notification.Event{
+		{Type: notification.ObjectCreated, Object: uri.Join("s3", "bucket", "file1.txt")},
+		{Type: notification.ObjectDeleted, Object: uri.Join("s3", "bucket", "file2.txt")},
+	}
+
+	err := handler.HandleEvents(t.Context(), events...)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(received) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(received))
+	}
+}
+
+func TestObjectHandlerFuncSingleEvent(t *testing.T) {
+	var received []*notification.Event
+	handler := notification.ObjectHandlerFunc(func(ctx context.Context, events ...*notification.Event) error {
+		received = events
+		return nil
+	})
+
+	event := &notification.Event{
+		Type:   notification.ObjectCreated,
+		Object: uri.Join("s3", "bucket", "file.txt"),
+	}
+
+	err := handler.HandleEvents(t.Context(), event)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(received) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(received))
+	}
+	if received[0] != event {
+		t.Error("expected the same event pointer")
 	}
 }
 
@@ -336,7 +383,7 @@ func TestObjectHandlerDeleteAfterProcessingOnlyOnSuccess(t *testing.T) {
 		Object: uri.Join("s3", "test-bucket", "test/file.txt"),
 	}
 
-	err := handler.HandleEvent(t.Context(), event)
+	err := handler.HandleEvents(t.Context(), event)
 	if err == nil {
 		t.Fatal("expected error for handler failure")
 	}
