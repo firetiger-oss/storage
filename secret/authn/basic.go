@@ -11,6 +11,13 @@ type BasicAuthCredential interface {
 	Password() string
 }
 
+// Basic is a static basic auth credential that implements BasicAuthCredential.
+// Index 0 is the username, index 1 is the password.
+type Basic [2]string
+
+func (c Basic) Username() string { return c[0] }
+func (c Basic) Password() string { return c[1] }
+
 // BasicScheme implements Scheme for HTTP Basic authentication.
 type BasicScheme[C BasicAuthCredential] struct{}
 
@@ -45,6 +52,12 @@ func (s BasicScheme[C]) Inject(req *http.Request, credential C) {
 // Injects credential into context via ContextWithCredential[C].
 func NewBasicAuthenticator[C BasicAuthCredential](loader Loader[C]) Authenticator {
 	return NewAuthenticator(loader, NewBasicScheme[C]())
+}
+
+// NewStaticBasicTransport returns an http.RoundTripper that injects static
+// Basic Auth credentials into every outbound request that lacks an Authorization header.
+func NewStaticBasicTransport(username, password string, base http.RoundTripper) http.RoundTripper {
+	return NewBasicAuthTransport(Static(Basic{username, password}), "", "*", base)
 }
 
 // NewBasicAuthForwarder returns an http.RoundTripper that injects Basic Auth

@@ -11,6 +11,11 @@ type BearerCredential interface {
 	Token() string
 }
 
+// Bearer is a static bearer token that implements BearerCredential.
+type Bearer string
+
+func (t Bearer) Token() string { return string(t) }
+
 // BearerScheme implements Scheme for Bearer token authentication.
 type BearerScheme[C BearerCredential] struct {
 	tokenID string
@@ -64,6 +69,12 @@ func NewBearerAuthForwarder(t http.RoundTripper) http.RoundTripper {
 // Credentials are cached and refreshed on 401 responses.
 func NewBearerAuthTransport[Credential BearerCredential](loader Loader[Credential], secretName, domain string, transport http.RoundTripper) http.RoundTripper {
 	return NewAuthTransport(loader, secretName, domain, transport, NewBearerScheme[Credential](""))
+}
+
+// NewStaticBearerTransport returns an http.RoundTripper that injects a static
+// Bearer token into every outbound request that lacks an Authorization header.
+func NewStaticBearerTransport(token string, base http.RoundTripper) http.RoundTripper {
+	return NewBearerAuthTransport(Static(Bearer(token)), "", "*", base)
 }
 
 func bearerToken(req *http.Request) (string, bool) {
