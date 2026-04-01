@@ -51,6 +51,11 @@ type loaderFunc[C any] func(ctx context.Context, id string) (C, error)
 
 func (f loaderFunc[C]) Load(ctx context.Context, id string) (C, error) { return f(ctx, id) }
 
+// Static returns a Loader that always returns the given credential value.
+func Static[C any](c C) Loader[C] {
+	return LoaderFunc[C](func(_ context.Context, _ string) (C, error) { return c, nil })
+}
+
 // NewLoader returns a Loader that loads credentials from a secret.Provider.
 func NewLoader[C any](provider secret.Provider) Loader[C] {
 	return LoaderFunc[C](func(ctx context.Context, id string) (C, error) {
