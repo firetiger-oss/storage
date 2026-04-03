@@ -376,8 +376,7 @@ func TestLRUZeroLimit(t *testing.T) {
 }
 
 func TestTTLLoadContextCancellation(t *testing.T) {
-	c := &TTL[string, string]{}
-	c.Limit = 100
+	c := &TTL[string, string]{Limit: 100}
 
 	fetchStarted := make(chan struct{})
 	fetchBlock := make(chan struct{})
@@ -427,8 +426,7 @@ func TestTTLLoadContextCancellation(t *testing.T) {
 // already-canceled context on a cache miss returns immediately without
 // invoking fetch or populating the cache.
 func TestTTLLoadAlreadyCanceledCacheMiss(t *testing.T) {
-	c := &TTL[string, string]{}
-	c.Limit = 100
+	c := &TTL[string, string]{Limit: 100}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -451,8 +449,7 @@ func TestTTLLoadAlreadyCanceledCacheMiss(t *testing.T) {
 }
 
 func TestTTLLoadUsesConfiguredFetchContext(t *testing.T) {
-	c := &TTL[string, string]{}
-	c.Limit = 100
+	c := &TTL[string, string]{Limit: 100}
 
 	type contextKey string
 

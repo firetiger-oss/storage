@@ -58,10 +58,11 @@ func CacheFetchContext(fn cache.NewFetchContext) CacheOption {
 func NewCache(provider Provider, options ...CacheOption) *Cache {
 	c := &Cache{
 		provider: provider,
-		cache:    cache.TTL[cacheKey, cacheEntry]{},
-		ttl:      DefaultCacheTTL,
+		cache: cache.TTL[cacheKey, cacheEntry]{
+			Limit: DefaultCacheSize,
+		},
+		ttl: DefaultCacheTTL,
 	}
-	c.cache.Limit = DefaultCacheSize
 	for _, opt := range options {
 		opt(c)
 	}

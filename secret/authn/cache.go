@@ -41,11 +41,12 @@ func WithLoaderFetchContext[C any](fn cache.NewFetchContext) LoaderCacheOption[C
 func NewCachedLoader[C any](loader Loader[C], opts ...LoaderCacheOption[C]) *CachedLoader[C] {
 	c := &CachedLoader[C]{
 		loader: loader,
-		cache:  cache.TTL[string, C]{},
-		ttl:    DefaultLoaderCacheTTL,
-		size:   func(C) int64 { return 0 },
+		cache: cache.TTL[string, C]{
+			Limit: DefaultLoaderCacheSize,
+		},
+		ttl:  DefaultLoaderCacheTTL,
+		size: func(C) int64 { return 0 },
 	}
-	c.cache.Limit = DefaultLoaderCacheSize
 	for _, opt := range opts {
 		opt(c)
 	}

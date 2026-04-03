@@ -86,15 +86,18 @@ type objectRange struct {
 // TTL is 1 minute.
 func NewCache(options ...CacheOption) *Cache {
 	cache := &Cache{
-		pages:    cache.TTL[objectRange, cachedObject]{},
-		infos:    cache.TTL[string, ObjectInfo]{},
-		objects:  cache.TTL[string, cachedObject]{},
+		pages: cache.TTL[objectRange, cachedObject]{
+			Limit: DefaultObjectPageCacheSize,
+		},
+		infos: cache.TTL[string, ObjectInfo]{
+			Limit: DefaultObjectInfoCacheSize,
+		},
+		objects: cache.TTL[string, cachedObject]{
+			Limit: DefaultObjectCacheSize,
+		},
 		pageSize: DefaultCachePageSize,
 		ttl:      DefaultCacheTTL,
 	}
-	cache.pages.Limit = DefaultObjectPageCacheSize
-	cache.infos.Limit = DefaultObjectInfoCacheSize
-	cache.objects.Limit = DefaultObjectCacheSize
 	for _, option := range options {
 		option(cache)
 	}
