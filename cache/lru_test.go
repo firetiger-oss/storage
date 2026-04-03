@@ -1,10 +1,12 @@
 package cache
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -372,4 +374,132 @@ func TestLRUZeroLimit(t *testing.T) {
 	if found {
 		t.Error("Nothing should be cached with zero limit")
 	}
+}
+
+func TestTTLLoadContextCancellation(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		c := &TTL[string, string]{Limit: 100}
+
+		fetchStarted := make(chan struct{})
+		fetchBlock := make(chan struct{})
+
+		// Start a load that blocks until we release it.
+		go func() {
+			c.Load(context.Background(), "key", time.Now(), false, func(context.Context) (int64, string, time.Time, error) {
+				close(fetchStarted)
+				<-fetchBlock
+				return 10, "value", time.Time{}, nil
+			})
+		}()
+
+		<-fetchStarted
+
+		// A second caller with a canceled context should return promptly
+		// without waiting for the fetch to complete.
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		_, _, err := c.Load(ctx, "key", time.Now(), false, func(context.Context) (int64, string, time.Time, error) {
+			t.Error("fetch should not be called for a co-waiter")
+			return 0, "", time.Time{}, nil
+		})
+		if err != context.Canceled {
+			t.Errorf("expected context.Canceled, got %v", err)
+		}
+
+		close(fetchBlock)
+		synctest.Wait()
+
+		v, _, err := c.Load(context.Background(), "key", time.Now(), false, func(context.Context) (int64, string, time.Time, error) {
+			t.Error("fetch should not be called for a cached key")
+			return 0, "", time.Time{}, nil
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if v != "value" {
+			t.Errorf("expected %q, got %q", "value", v)
+		}
+	})
+}
+
+// TestTTLLoadAlreadyCanceledCacheMiss verifies that a Load call with an
+// already-canceled context on a cache miss returns immediately without
+// invoking fetch or populating the cache.
+func TestTTLLoadAlreadyCanceledCacheMiss(t *testing.T) {
+	c := &TTL[string, string]{Limit: 100}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, _, err := c.Load(ctx, "key", time.Now(), false, func(context.Context) (int64, string, time.Time, error) {
+		t.Error("fetch must not be called with an already-canceled context")
+		return 0, "", time.Time{}, nil
+	})
+	if err != context.Canceled {
+		t.Errorf("expected context.Canceled, got %v", err)
+	}
+
+	// Nothing should have been stored in the cache.
+	_, _, err = c.Load(context.Background(), "key", time.Now(), false, func(context.Context) (int64, string, time.Time, error) {
+		return 10, "value", time.Time{}, nil
+	})
+	if err != nil {
+		t.Fatalf("unexpected error on follow-up load: %v", err)
+	}
+}
+
+func TestTTLLoadUsesConfiguredFetchContext(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		c := &TTL[string, string]{Limit: 100}
+
+		type contextKey string
+
+		fetchCanceled := false
+		cancelCalled := make(chan struct{})
+		c.NewFetchContext = func() (context.Context, context.CancelFunc) {
+			ctx, cancel := context.WithCancel(context.WithValue(context.Background(), contextKey("source"), "cache"))
+			return ctx, func() {
+				cancel()
+				close(cancelCalled)
+			}
+		}
+
+		waitCtx, waitCancel := context.WithCancel(context.Background())
+		fetchStarted := make(chan struct{})
+		fetchRelease := make(chan struct{})
+		loadDone := make(chan struct{})
+
+		go func() {
+			defer close(loadDone)
+			_, _, _ = c.Load(waitCtx, "key", time.Now(), false, func(fetchCtx context.Context) (int64, string, time.Time, error) {
+				if got := fetchCtx.Value(contextKey("source")); got != "cache" {
+					t.Errorf("expected configured fetch context value, got %v", got)
+				}
+				close(fetchStarted)
+				waitCancel()
+				select {
+				case <-fetchCtx.Done():
+					fetchCanceled = true
+				case <-fetchRelease:
+				}
+				return 10, "value", time.Time{}, nil
+			})
+		}()
+
+		<-fetchStarted
+		synctest.Wait()
+		if fetchCanceled {
+			t.Fatal("fetch context should not be canceled when the waiter is canceled")
+		}
+
+		close(fetchRelease)
+		synctest.Wait()
+		<-loadDone
+		select {
+		case <-cancelCalled:
+		default:
+			t.Fatal("expected configured fetch context cancel function to be called")
+		}
+	})
 }
