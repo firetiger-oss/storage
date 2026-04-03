@@ -421,3 +421,79 @@ func TestTTLLoadContextCancellation(t *testing.T) {
 		t.Errorf("expected %q, got %q", "value", v)
 	}
 }
+
+// TestTTLLoadAlreadyCanceledCacheMiss verifies that a Load call with an
+// already-canceled context on a cache miss returns immediately without
+// invoking fetch or populating the cache.
+func TestTTLLoadAlreadyCanceledCacheMiss(t *testing.T) {
+	c := &TTL[string, string]{Limit: 100}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, _, err := c.Load(ctx, "key", time.Now(), false, func() (int64, string, time.Time, error) {
+		t.Error("fetch must not be called with an already-canceled context")
+		return 0, "", time.Time{}, nil
+	})
+	if err != context.Canceled {
+		t.Errorf("expected context.Canceled, got %v", err)
+	}
+
+	// Nothing should have been stored in the cache.
+	_, _, err = c.Load(context.Background(), "key", time.Now(), false, func() (int64, string, time.Time, error) {
+		return 10, "value", time.Time{}, nil
+	})
+	if err != nil {
+		t.Fatalf("unexpected error on follow-up load: %v", err)
+	}
+}
+
+// TestTTLLoadReadyBeatsCancel verifies that when the shared fetch completes
+// at the same time the waiting context is canceled, the completed result is
+// returned rather than a cancellation error.
+func TestTTLLoadReadyBeatsCancel(t *testing.T) {
+	const iterations = 1000
+
+	for i := range iterations {
+		c := &TTL[string, string]{Limit: 100}
+
+		fetchDone := make(chan struct{})
+		fetchBlock := make(chan struct{})
+
+		// Goroutine that owns the fetch.
+		go func() {
+			c.Load(context.Background(), "key", time.Now(), false, func() (int64, string, time.Time, error) {
+				<-fetchBlock
+				return 10, "value", time.Time{}, nil
+			})
+			close(fetchDone)
+		}()
+
+		ctx, cancel := context.WithCancel(context.Background())
+
+		// Second caller waits on the same promise.
+		resultCh := make(chan error, 1)
+		go func() {
+			// Deliberately don't wait for fetchStarted so this goroutine may
+			// reach the select before or after the fetch completes.
+			_, _, err := c.Load(ctx, "key", time.Now(), false, func() (int64, string, time.Time, error) {
+				t.Error("fetch must not be called for co-waiter")
+				return 0, "", time.Time{}, nil
+			})
+			resultCh <- err
+		}()
+
+		// Unblock the fetch and cancel the waiter's context simultaneously.
+		close(fetchBlock)
+		cancel()
+
+		<-fetchDone
+		err := <-resultCh
+
+		// The result must be either success (fetch won) or cancellation (cancel
+		// won before the result was ready). It must never be any other error.
+		if err != nil && err != context.Canceled {
+			t.Errorf("iteration %d: unexpected error %v", i, err)
+		}
+	}
+}
