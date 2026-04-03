@@ -92,6 +92,7 @@ func NewCache(options ...CacheOption) *Cache {
 	for _, option := range options {
 		option(cache)
 	}
+	registerCacheMetrics(cache)
 	return cache
 }
 
@@ -116,6 +117,7 @@ func (c *Cache) PageSize() int64 {
 // CacheStat contains statistics about the cache configuration and utilization.
 type CacheStat struct {
 	Limit     int64 // Maximum size of the cache in bytes.
+	Entries   int64 // Current number of cached entries.
 	Size      int64 // Current size of the cache in bytes.
 	Hits      int64 // Total number of cache hits.
 	Misses    int64 // Total number of cache misses.
