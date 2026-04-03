@@ -7,8 +7,6 @@ import (
 	"sync"
 	"testing"
 
-	gofs "github.com/hanwen/go-fuse/v2/fs"
-
 	storage "github.com/firetiger-oss/storage"
 	storagefuse "github.com/firetiger-oss/storage/fuse"
 	"github.com/firetiger-oss/storage/memory"
@@ -17,7 +15,7 @@ import (
 func mountBucket(t *testing.T, bucket storage.Bucket) string {
 	t.Helper()
 	dir := t.TempDir()
-	server, err := storagefuse.Mount(dir, bucket, &gofs.Options{})
+	server, err := storagefuse.Mount(dir, bucket, nil)
 	if err != nil {
 		t.Skipf("FUSE not available: %v", err)
 	}
