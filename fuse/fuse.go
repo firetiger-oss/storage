@@ -13,6 +13,7 @@ import (
 	gofuse "github.com/hanwen/go-fuse/v2/fuse"
 
 	storage "github.com/firetiger-oss/storage"
+	"github.com/firetiger-oss/storage/uri"
 )
 
 // Mount mounts bucket at dir. The returned server controls the lifecycle;
@@ -21,13 +22,14 @@ func Mount(dir string, bucket storage.Bucket, opts *gofs.Options) (*gofuse.Serve
 	return gofs.Mount(dir, &dirNode{bucket: bucket}, opts)
 }
 
-// pathIno produces a stable inode number by hashing the full URI of the
-// scoped bucket plus the entry name. bucket.Location() for a prefixed bucket
-// returns the full URI including accumulated prefix, so the result is unique
-// across nested directories even when filenames repeat.
+// pathIno produces a stable inode number from the fully-qualified object URI.
+// Using uri.Split + uri.Join ensures the hash input is canonical regardless of
+// how the bucket's Location string is formatted (e.g. trailing slashes), so
+// two nodes that refer to the same object always get the same inode number.
 func pathIno(bucket storage.Bucket, name string) uint64 {
+	scheme, location, path := uri.Split(bucket.Location())
+	objectURI := uri.Join(scheme, location, path, name)
 	h := fnv.New64a()
-	io.WriteString(h, bucket.Location())
-	io.WriteString(h, name)
+	io.WriteString(h, objectURI)
 	return h.Sum64()
 }
