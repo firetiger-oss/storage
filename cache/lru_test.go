@@ -497,16 +497,3 @@ func TestTTLLoadUsesConfiguredFetchContext(t *testing.T) {
 		t.Fatal("expected configured fetch context cancel function to be called")
 	}
 }
-
-func TestWaitForPromiseReadyBeatsCanceledWaiter(t *testing.T) {
-	ready := make(chan struct{})
-	close(ready)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	err := waitForPromise(ctx, &Promise[string]{ready: ready, value: "value"})
-	if err != nil {
-		t.Fatalf("expected completed shared result, got error %v", err)
-	}
-}

@@ -65,8 +65,10 @@ func (c *TTL[K, V]) Load(ctx context.Context, key K, now time.Time, update bool,
 	lru.mutex.Unlock()
 
 	if promise != nil {
-		if err := waitForPromise(ctx, promise); err != nil {
-			return value, expire, err
+		select {
+		case <-promise.ready:
+		case <-ctx.Done():
+			return value, expire, context.Cause(ctx)
 		}
 		if promise.error != nil {
 			return value, expire, promise.error
@@ -75,20 +77,4 @@ func (c *TTL[K, V]) Load(ctx context.Context, key K, now time.Time, update bool,
 	}
 
 	return entry.value, entry.expire, nil
-}
-
-func waitForPromise[T any](ctx context.Context, promise *Promise[T]) error {
-	select {
-	case <-promise.ready:
-		return nil
-	case <-ctx.Done():
-		// Prefer a completed result over a simultaneous cancellation to avoid
-		// turning near-deadline cache hits into flaky cancellations.
-		select {
-		case <-promise.ready:
-			return nil
-		default:
-			return context.Cause(ctx)
-		}
-	}
 }
