@@ -180,4 +180,3 @@ func TestWriteWithoutChanges(t *testing.T) {
 		t.Fatalf("got %q, want %q", got, want)
 	}
 }
-

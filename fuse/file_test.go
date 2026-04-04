@@ -277,4 +277,3 @@ func TestConcurrentGetattrAndTruncate(t *testing.T) {
 		t.Fatalf("expected size 5 after truncate, got %d", fi.Size())
 	}
 }
-
