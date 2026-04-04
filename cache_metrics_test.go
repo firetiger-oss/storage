@@ -23,13 +23,40 @@ func TestCacheMetrics(t *testing.T) {
 		_ = provider.Shutdown(context.Background())
 	})
 
-	cache := storage.NewCache(
+	cache := newTestCache()
+	exerciseBucket(t, cache.AdaptBucket(memory.NewBucket()))
+
+	assertCacheMetrics(t, reader, cache)
+}
+
+func TestCacheMetricsProviderInstalledAfterCacheCreation(t *testing.T) {
+	cache := newTestCache()
+	bucket := cache.AdaptBucket(memory.NewBucket())
+
+	reader := sdkmetric.NewManualReader()
+	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	otel.SetMeterProvider(provider)
+	t.Cleanup(func() {
+		otel.SetMeterProvider(sdkmetric.NewMeterProvider())
+		_ = provider.Shutdown(context.Background())
+	})
+
+	exerciseBucket(t, bucket)
+	assertCacheMetrics(t, reader, cache)
+}
+
+func newTestCache() *storage.Cache {
+	return storage.NewCache(
 		storage.ObjectCacheSize(1024),
 		storage.ObjectInfoCacheSize(1024),
 		storage.ObjectPageCacheSize(1024),
 		storage.CachePageSize(4),
 	)
-	bucket := cache.AdaptBucket(memory.NewBucket())
+}
+
+func exerciseBucket(t *testing.T, bucket storage.Bucket) {
+	t.Helper()
+
 	ctx := context.Background()
 
 	data := []byte("hello world")
@@ -79,11 +106,14 @@ func TestCacheMetrics(t *testing.T) {
 		t.Fatalf("reading page hit: %v", err)
 	}
 	pageObject.Close()
+}
 
+func assertCacheMetrics(t *testing.T, reader *sdkmetric.ManualReader, cache *storage.Cache) {
+	t.Helper()
 	objectsStat, infosStat, pagesStat := cache.Stat()
 
 	var rm metricdata.ResourceMetrics
-	if err := reader.Collect(ctx, &rm); err != nil {
+	if err := reader.Collect(context.Background(), &rm); err != nil {
 		t.Fatalf("collecting metrics: %v", err)
 	}
 

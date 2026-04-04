@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"runtime"
 	"weak"
 
 	"go.opentelemetry.io/otel"
@@ -28,7 +29,12 @@ type cacheMetricKind struct {
 }
 
 func registerCacheMetrics(c *Cache) {
-	meter := otel.Meter(instrumentationName)
+	meterProvider := otel.GetMeterProvider()
+	if fmt.Sprintf("%T", meterProvider) == "*global.meterProvider" {
+		return
+	}
+
+	meter := meterProvider.Meter(instrumentationName)
 	metrics, err := newCacheMetrics(meter)
 	if err != nil {
 		slog.Error("registering cache metrics", "error", err)
@@ -61,7 +67,7 @@ func registerCacheMetrics(c *Cache) {
 		},
 	}
 
-	_, err = meter.RegisterCallback(func(ctx context.Context, observer metric.Observer) error {
+	registration, err := meter.RegisterCallback(func(ctx context.Context, observer metric.Observer) error {
 		cache := cacheRef.Value()
 		if cache == nil {
 			return nil
@@ -83,6 +89,25 @@ func registerCacheMetrics(c *Cache) {
 	}, metrics.sizeBytes, metrics.limitBytes, metrics.entries, metrics.hits, metrics.misses, metrics.evictions)
 	if err != nil {
 		slog.Error("registering cache metrics callback", "error", err)
+		return
+	}
+
+	c.metricsRegistration = registration
+	runtime.AddCleanup(c, unregisterCacheMetrics, registration)
+}
+
+func (c *Cache) ensureMetricsRegistered() {
+	c.metricsMutex.Lock()
+	defer c.metricsMutex.Unlock()
+	if c.metricsRegistration != nil {
+		return
+	}
+	registerCacheMetrics(c)
+}
+
+func unregisterCacheMetrics(registration metric.Registration) {
+	if err := registration.Unregister(); err != nil {
+		slog.Error("unregistering cache metrics callback", "error", err)
 	}
 }
 
