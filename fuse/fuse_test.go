@@ -20,10 +20,11 @@ import (
 // specific operations, enabling error-path testing without a mock framework.
 type errorBucket struct {
 	storage.Bucket
-	headErr error
-	getErr  error
-	putErr  error
-	listErr error
+	headErr   error
+	getErr    error
+	putErr    error
+	listErr   error
+	deleteErr error
 }
 
 func (e *errorBucket) HeadObject(ctx context.Context, key string) (storage.ObjectInfo, error) {
@@ -61,6 +62,9 @@ func (e *errorBucket) WatchObjects(ctx context.Context, opts ...storage.ListOpti
 }
 
 func (e *errorBucket) DeleteObject(ctx context.Context, key string) error {
+	if e.deleteErr != nil {
+		return e.deleteErr
+	}
 	return e.Bucket.DeleteObject(ctx, key)
 }
 
@@ -593,6 +597,95 @@ func TestUnlinkNonExistent(t *testing.T) {
 	dir := mountBucket(t, bucket)
 
 	err := os.Remove(filepath.Join(dir, "ghost.txt"))
+	if !os.IsNotExist(err) {
+		t.Fatalf("expected ErrNotExist, got %v", err)
+	}
+}
+
+// TestTruncateWithoutWrite verifies that truncating an open file without any
+// Write calls still persists the truncation to the bucket. This exercises the
+// dirty flag set in writeHandle.truncate.
+func TestTruncateWithoutWrite(t *testing.T) {
+	bucket := newBucket(t)
+	put(t, bucket, "foo.txt", []byte("hello world"))
+	dir := mountBucket(t, bucket)
+
+	f, err := os.OpenFile(filepath.Join(dir, "foo.txt"), os.O_RDWR, 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Truncate(5); err != nil {
+		f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := os.ReadFile(filepath.Join(dir, "foo.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []byte("hello"); !bytes.Equal(got, want) {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+// TestTruncateToZeroOpenFile verifies that truncating an open (dirty) file to
+// zero persists the empty content, not the pre-truncation bytes.
+func TestTruncateToZeroOpenFile(t *testing.T) {
+	bucket := newBucket(t)
+	dir := mountBucket(t, bucket)
+
+	f, err := os.Create(filepath.Join(dir, "foo.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write(bytes.Repeat([]byte("x"), 100)); err != nil {
+		f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Truncate(0); err != nil {
+		f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	info, err := bucket.HeadObject(t.Context(), "foo.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Size != 0 {
+		t.Fatalf("expected size 0, got %d", info.Size)
+	}
+}
+
+// TestCopyOnOpenError verifies that a non-ENOENT GetObject error during
+// copy-on-open (O_RDWR without O_TRUNC) propagates to the caller rather than
+// silently producing an empty write buffer.
+func TestCopyOnOpenError(t *testing.T) {
+	bucket := newBucket(t)
+	put(t, bucket, "foo.txt", []byte("hello"))
+	eb := &errorBucket{Bucket: bucket, getErr: storage.ErrTooManyRequests}
+	dir := mountBucket(t, eb)
+
+	_, err := os.OpenFile(filepath.Join(dir, "foo.txt"), os.O_RDWR, 0644)
+	if err == nil {
+		t.Fatal("expected error opening file with failing GetObject, got nil")
+	}
+}
+
+// TestUnlinkDeleteError verifies that a DeleteObject error (including ENOENT)
+// propagates through the Unlink handler rather than being masked.
+func TestUnlinkDeleteError(t *testing.T) {
+	bucket := newBucket(t)
+	put(t, bucket, "foo.txt", []byte("hello"))
+	eb := &errorBucket{Bucket: bucket, deleteErr: storage.ErrObjectNotFound}
+	dir := mountBucket(t, eb)
+
+	err := os.Remove(filepath.Join(dir, "foo.txt"))
 	if !os.IsNotExist(err) {
 		t.Fatalf("expected ErrNotExist, got %v", err)
 	}

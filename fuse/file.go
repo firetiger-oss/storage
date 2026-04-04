@@ -49,17 +49,22 @@ func (f *fileNode) Open(ctx context.Context, flags uint32) (gofs.FileHandle, uin
 
 func (f *fileNode) Setattr(ctx context.Context, fh gofs.FileHandle, in *gofuse.SetAttrIn, out *gofuse.AttrOut) syscall.Errno {
 	if size, ok := in.GetSize(); ok {
-		if size == 0 {
-			if _, err := f.bucket.PutObject(ctx, f.key, bytes.NewReader(nil)); err != nil {
-				return storageErr(err)
-			}
-			f.info.Size = 0
-		} else if wh, ok := fh.(*writeHandle); ok {
+		if wh, ok := fh.(*writeHandle); ok {
+			// Route all truncations through the write handle so the temp file
+			// stays consistent and dirty is set appropriately.
 			if err := wh.truncate(int64(size)); err != nil {
 				return storageErr(err)
 			}
 			f.info.Size = int64(size)
+		} else if size == 0 {
+			// No open write handle — update bucket directly.
+			if _, err := f.bucket.PutObject(ctx, f.key, bytes.NewReader(nil)); err != nil {
+				return storageErr(err)
+			}
+			f.info.Size = 0
 		}
+		// size > 0 with no write handle: no-op (truncate(2) without an open fd
+		// is not supported for object-store-backed FUSE).
 	}
 	// Update f.info from the bucket only when no write handle is open (i.e. the
 	// object exists in the bucket). When a write handle is open the object may

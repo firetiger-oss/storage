@@ -2,6 +2,7 @@ package fuse
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"syscall"
@@ -63,7 +64,8 @@ func newWriteHandle(ctx context.Context, bucket storage.Bucket, key string, flag
 	truncating := flags&uint32(syscall.O_TRUNC) != 0 || flags&uint32(syscall.O_CREAT) != 0
 	if !truncating {
 		rc, _, err := bucket.GetObject(ctx, key)
-		if err == nil {
+		switch {
+		case err == nil:
 			if _, err = io.Copy(tmp, rc); err != nil {
 				rc.Close()
 				tmp.Close()
@@ -76,8 +78,13 @@ func newWriteHandle(ctx context.Context, bucket storage.Bucket, key string, flag
 				os.Remove(tmp.Name())
 				return nil, err
 			}
+		case errors.Is(err, storage.ErrObjectNotFound):
+			// Opening a file that doesn't exist yet is fine; start with an empty buffer.
+		default:
+			tmp.Close()
+			os.Remove(tmp.Name())
+			return nil, err
 		}
-		// Object not found is fine for a new file; any other error is surfaced.
 	}
 
 	return &writeHandle{bucket: bucket, key: key, tmp: tmp}, nil
@@ -123,5 +130,9 @@ func (h *writeHandle) Release(ctx context.Context) syscall.Errno {
 
 // truncate resizes the temp file to the given size.
 func (h *writeHandle) truncate(size int64) error {
-	return h.tmp.Truncate(size)
+	if err := h.tmp.Truncate(size); err != nil {
+		return err
+	}
+	h.dirty = true
+	return nil
 }

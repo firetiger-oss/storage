@@ -105,11 +105,5 @@ func (d *dirNode) Create(ctx context.Context, name string, flags uint32, mode ui
 }
 
 func (d *dirNode) Unlink(ctx context.Context, name string) syscall.Errno {
-	if err := d.bucket.DeleteObject(ctx, name); err != nil {
-		if storageErr(err) == syscall.ENOENT {
-			return gofs.OK
-		}
-		return storageErr(err)
-	}
-	return gofs.OK
+	return storageErr(d.bucket.DeleteObject(ctx, name))
 }
