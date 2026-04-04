@@ -2,15 +2,91 @@ package fuse_test
 
 import (
 	"bytes"
+	"context"
+	"io"
+	"iter"
 	"os"
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	storage "github.com/firetiger-oss/storage"
 	storagefuse "github.com/firetiger-oss/storage/fuse"
 	"github.com/firetiger-oss/storage/memory"
 )
+
+// errorBucket wraps a storage.Bucket and injects configurable errors on
+// specific operations, enabling error-path testing without a mock framework.
+type errorBucket struct {
+	storage.Bucket
+	headErr error
+	getErr  error
+	putErr  error
+	listErr error
+}
+
+func (e *errorBucket) HeadObject(ctx context.Context, key string) (storage.ObjectInfo, error) {
+	if e.headErr != nil {
+		return storage.ObjectInfo{}, e.headErr
+	}
+	return e.Bucket.HeadObject(ctx, key)
+}
+
+func (e *errorBucket) GetObject(ctx context.Context, key string, opts ...storage.GetOption) (io.ReadCloser, storage.ObjectInfo, error) {
+	if e.getErr != nil {
+		return nil, storage.ObjectInfo{}, e.getErr
+	}
+	return e.Bucket.GetObject(ctx, key, opts...)
+}
+
+func (e *errorBucket) PutObject(ctx context.Context, key string, value io.Reader, opts ...storage.PutOption) (storage.ObjectInfo, error) {
+	if e.putErr != nil {
+		return storage.ObjectInfo{}, e.putErr
+	}
+	return e.Bucket.PutObject(ctx, key, value, opts...)
+}
+
+func (e *errorBucket) ListObjects(ctx context.Context, opts ...storage.ListOption) iter.Seq2[storage.Object, error] {
+	if e.listErr != nil {
+		return func(yield func(storage.Object, error) bool) {
+			yield(storage.Object{}, e.listErr)
+		}
+	}
+	return e.Bucket.ListObjects(ctx, opts...)
+}
+
+func (e *errorBucket) WatchObjects(ctx context.Context, opts ...storage.ListOption) iter.Seq2[storage.Object, error] {
+	return e.Bucket.WatchObjects(ctx, opts...)
+}
+
+func (e *errorBucket) DeleteObject(ctx context.Context, key string) error {
+	return e.Bucket.DeleteObject(ctx, key)
+}
+
+func (e *errorBucket) DeleteObjects(ctx context.Context, objects iter.Seq2[string, error]) iter.Seq2[string, error] {
+	return e.Bucket.DeleteObjects(ctx, objects)
+}
+
+func (e *errorBucket) CopyObject(ctx context.Context, from, to string, opts ...storage.PutOption) error {
+	return e.Bucket.CopyObject(ctx, from, to, opts...)
+}
+
+func (e *errorBucket) PresignGetObject(ctx context.Context, key string, exp time.Duration, opts ...storage.GetOption) (string, error) {
+	return e.Bucket.PresignGetObject(ctx, key, exp, opts...)
+}
+
+func (e *errorBucket) PresignPutObject(ctx context.Context, key string, exp time.Duration, opts ...storage.PutOption) (string, error) {
+	return e.Bucket.PresignPutObject(ctx, key, exp, opts...)
+}
+
+func (e *errorBucket) PresignHeadObject(ctx context.Context, key string, exp time.Duration) (string, error) {
+	return e.Bucket.PresignHeadObject(ctx, key, exp)
+}
+
+func (e *errorBucket) PresignDeleteObject(ctx context.Context, key string, exp time.Duration) (string, error) {
+	return e.Bucket.PresignDeleteObject(ctx, key, exp)
+}
 
 func mountBucket(t *testing.T, bucket storage.Bucket) string {
 	t.Helper()
@@ -301,5 +377,220 @@ func TestConcurrentReads(t *testing.T) {
 		if !bytes.Equal(results[i], want) {
 			t.Errorf("goroutine %d: got %q, want %q", i, results[i], want)
 		}
+	}
+}
+
+// --- P0: copy-on-open and non-zero truncation ---
+
+// TestPartialOverwrite exercises the copy-on-open path in writeHandle: opening
+// an existing file with O_RDWR (no O_TRUNC) downloads the current content into
+// the temp file first, so a partial write preserves the surrounding bytes.
+func TestPartialOverwrite(t *testing.T) {
+	bucket := newBucket(t)
+	put(t, bucket, "foo.txt", []byte("hello world"))
+	dir := mountBucket(t, bucket)
+
+	f, err := os.OpenFile(filepath.Join(dir, "foo.txt"), os.O_RDWR, 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("HELLO"); err != nil {
+		f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := os.ReadFile(filepath.Join(dir, "foo.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []byte("HELLO world"); !bytes.Equal(got, want) {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+// TestTruncateOpenFile exercises the non-zero Setattr truncation path in
+// fileNode, which resizes the open writeHandle's temp file via wh.truncate.
+func TestTruncateOpenFile(t *testing.T) {
+	bucket := newBucket(t)
+	dir := mountBucket(t, bucket)
+
+	f, err := os.Create(filepath.Join(dir, "foo.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := bytes.Repeat([]byte("x"), 100)
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Truncate(50); err != nil {
+		f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	info, err := bucket.HeadObject(t.Context(), "foo.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Size != 50 {
+		t.Fatalf("expected size 50, got %d", info.Size)
+	}
+}
+
+// --- P1: error propagation ---
+
+// TestReadErrorPropagation verifies that a GetObject error surfaces through
+// the FUSE layer as os.ErrNotExist when the object is not found.
+func TestReadErrorPropagation(t *testing.T) {
+	bucket := newBucket(t)
+	put(t, bucket, "foo.txt", []byte("hello"))
+	eb := &errorBucket{Bucket: bucket, getErr: storage.ErrObjectNotFound}
+	dir := mountBucket(t, eb)
+
+	_, err := os.ReadFile(filepath.Join(dir, "foo.txt"))
+	if !os.IsNotExist(err) {
+		t.Fatalf("expected not-exist error, got %v", err)
+	}
+}
+
+// TestWriteToReadOnlyBucket verifies that a PutObject error (ErrBucketReadOnly)
+// surfaces as an error when closing a written file.
+func TestWriteToReadOnlyBucket(t *testing.T) {
+	bucket := newBucket(t)
+	eb := &errorBucket{Bucket: bucket, putErr: storage.ErrBucketReadOnly}
+	dir := mountBucket(t, eb)
+
+	err := os.WriteFile(filepath.Join(dir, "out.txt"), []byte("data"), 0644)
+	if err == nil {
+		t.Fatal("expected error writing to read-only bucket, got nil")
+	}
+}
+
+// TestReaddirError verifies that a ListObjects error propagates through Readdir.
+func TestReaddirError(t *testing.T) {
+	bucket := newBucket(t)
+	put(t, bucket, "foo.txt", []byte("x"))
+	eb := &errorBucket{Bucket: bucket, listErr: storage.ErrBucketNotFound}
+	dir := mountBucket(t, eb)
+
+	_, err := os.ReadDir(dir)
+	if err == nil {
+		t.Fatal("expected error from ReadDir, got nil")
+	}
+}
+
+// TestLookupHeadObjectError verifies that a non-ENOENT HeadObject error
+// propagates as a non-ErrNotExist error (not silently treated as missing).
+func TestLookupHeadObjectError(t *testing.T) {
+	bucket := newBucket(t)
+	put(t, bucket, "foo.txt", []byte("x"))
+	eb := &errorBucket{Bucket: bucket, headErr: storage.ErrTooManyRequests}
+	dir := mountBucket(t, eb)
+
+	_, err := os.Stat(filepath.Join(dir, "foo.txt"))
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if os.IsNotExist(err) {
+		t.Fatalf("expected non-ErrNotExist error, got ErrNotExist: %v", err)
+	}
+}
+
+// --- P2: behavioral edge cases ---
+
+// TestWriteWithoutChanges verifies the dirty=false branch in Flush: opening a
+// file for writing without modifying it does not overwrite the bucket object.
+func TestWriteWithoutChanges(t *testing.T) {
+	bucket := newBucket(t)
+	want := []byte("original content")
+	put(t, bucket, "foo.txt", want)
+	dir := mountBucket(t, bucket)
+
+	// Open for write but do nothing.
+	f, err := os.OpenFile(filepath.Join(dir, "foo.txt"), os.O_RDWR, 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := os.ReadFile(filepath.Join(dir, "foo.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+// TestConcurrentWrites verifies that concurrent file creations are isolated
+// (each writeHandle uses its own temp file) and all writes reach the bucket.
+func TestConcurrentWrites(t *testing.T) {
+	bucket := newBucket(t)
+	dir := mountBucket(t, bucket)
+
+	const n = 10
+	var wg sync.WaitGroup
+	errs := make([]error, n)
+
+	for i := range n {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			name := filepath.Join(dir, "file"+string(rune('0'+i))+".txt")
+			errs[i] = os.WriteFile(name, []byte{byte(i)}, 0644)
+		}(i)
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Errorf("goroutine %d: %v", i, err)
+		}
+	}
+	// Verify all files landed in the bucket.
+	for i := range n {
+		key := "file" + string(rune('0'+i)) + ".txt"
+		if _, err := bucket.HeadObject(t.Context(), key); err != nil {
+			t.Errorf("key %q missing from bucket: %v", key, err)
+		}
+	}
+}
+
+// TestLargeFile verifies that reading and writing a file larger than a single
+// FUSE I/O page works correctly, exercising range-read stitching in readHandle.
+func TestLargeFile(t *testing.T) {
+	bucket := newBucket(t)
+	dir := mountBucket(t, bucket)
+
+	want := bytes.Repeat([]byte("abcdefgh"), 128*1024/8) // 128 KB
+	if err := os.WriteFile(filepath.Join(dir, "large.bin"), want, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := os.ReadFile(filepath.Join(dir, "large.bin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("large file round-trip mismatch: got %d bytes, want %d bytes", len(got), len(want))
+	}
+}
+
+// TestUnlinkNonExistent verifies that removing a key that never existed
+// succeeds (idempotent delete).
+func TestUnlinkNonExistent(t *testing.T) {
+	bucket := newBucket(t)
+	dir := mountBucket(t, bucket)
+
+	if err := os.Remove(filepath.Join(dir, "ghost.txt")); err != nil {
+		t.Fatalf("expected nil, got %v", err)
 	}
 }
