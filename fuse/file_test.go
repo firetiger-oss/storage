@@ -199,7 +199,7 @@ func TestTruncateShrinkExactSize(t *testing.T) {
 }
 
 // TestConcurrentGetattr exercises concurrent Stat calls on the same file.
-// Under -race this catches unprotected reads of fileNode.info.
+// Under -race this catches data races on any shared fileNode state.
 func TestConcurrentGetattr(t *testing.T) {
 	bucket := newBucket(t)
 	put(t, bucket, "foo.txt", []byte("hello"))
@@ -233,7 +233,8 @@ func TestConcurrentGetattr(t *testing.T) {
 }
 
 // TestConcurrentGetattrAndTruncate runs concurrent Stat and Truncate calls on
-// the same file. Under -race this catches write-lock contention on fileNode.info.
+// the same file. Under -race this verifies there are no data races between
+// concurrent FUSE requests on the same fileNode.
 func TestConcurrentGetattrAndTruncate(t *testing.T) {
 	bucket := newBucket(t)
 	put(t, bucket, "foo.txt", []byte("hello world"))

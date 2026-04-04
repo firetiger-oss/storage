@@ -5,7 +5,6 @@ import (
 	"context"
 	"io"
 	"os"
-	"sync"
 	"syscall"
 	"time"
 
@@ -22,8 +21,6 @@ type fileNode struct {
 	gofs.Inode
 	bucket storage.Bucket
 	key    string
-	mu     sync.RWMutex
-	info   storage.ObjectInfo
 }
 
 var _ gofs.NodeGetattrer = (*fileNode)(nil)
@@ -35,9 +32,6 @@ func (f *fileNode) Getattr(ctx context.Context, fh gofs.FileHandle, out *gofuse.
 	if err != nil {
 		return makeErrno(err)
 	}
-	f.mu.Lock()
-	f.info = info
-	f.mu.Unlock()
 	fillFileAttr(&out.Attr, info)
 	return gofs.OK
 }
@@ -61,9 +55,6 @@ func (f *fileNode) Setattr(ctx context.Context, fh gofs.FileHandle, in *gofuse.S
 			if err := wh.truncate(int64(size)); err != nil {
 				return makeErrno(err)
 			}
-			f.mu.Lock()
-			f.info.Size = int64(size)
-			f.mu.Unlock()
 		} else if size == 0 {
 			// No open write handle — update bucket directly.
 			if _, err := f.bucket.PutObject(ctx, f.key, bytes.NewReader(nil)); err != nil {
@@ -76,22 +67,20 @@ func (f *fileNode) Setattr(ctx context.Context, fh gofs.FileHandle, in *gofuse.S
 			}
 		}
 	}
-	// Update f.info from the bucket only when no write handle is open (i.e. the
-	// object exists in the bucket). When a write handle is open the object may
-	// not be in the bucket yet, so we use the locally tracked f.info instead.
-	if fh == nil {
+	// Fill response attributes. When a write handle is open the object may not
+	// be in the bucket yet, so read the size directly from the temp file.
+	// Otherwise fetch fresh attributes from the bucket.
+	if wh, ok := fh.(*writeHandle); ok {
+		fi, err := wh.tmp.Stat()
+		if err != nil {
+			return syscall.EIO
+		}
+		fillFileAttr(&out.Attr, storage.ObjectInfo{Size: fi.Size()})
+	} else {
 		info, err := f.bucket.HeadObject(ctx, f.key)
 		if err != nil {
 			return makeErrno(err)
 		}
-		f.mu.Lock()
-		f.info = info
-		f.mu.Unlock()
-		fillFileAttr(&out.Attr, info)
-	} else {
-		f.mu.RLock()
-		info := f.info
-		f.mu.RUnlock()
 		fillFileAttr(&out.Attr, info)
 	}
 	return gofs.OK

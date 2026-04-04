@@ -29,7 +29,7 @@ func (d *dirNode) Lookup(ctx context.Context, name string, out *gofuse.EntryOut)
 	// First check if name is a real object (file).
 	info, err := d.bucket.HeadObject(ctx, name)
 	if err == nil {
-		child := d.NewInode(ctx, &fileNode{bucket: d.bucket, key: name, info: info},
+		child := d.NewInode(ctx, &fileNode{bucket: d.bucket, key: name},
 			gofs.StableAttr{Mode: syscall.S_IFREG, Ino: pathIno(d.bucket, name)})
 		fillFileAttr(&out.Attr, info)
 		return child, gofs.OK
