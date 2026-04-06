@@ -32,6 +32,12 @@ func TestConcurrentReads(t *testing.T) {
 	put(t, bucket, "shared.txt", want)
 	dir := mountBucket(t, bucket)
 
+	// Warm up the FUSE mount: resolve the inode so concurrent opens don't
+	// race with the very first Lookup on a fresh mount.
+	if _, err := os.Stat(filepath.Join(dir, "shared.txt")); err != nil {
+		t.Fatal(err)
+	}
+
 	const n = 10
 	var wg sync.WaitGroup
 	errs := make([]error, n)
