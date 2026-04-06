@@ -150,7 +150,7 @@ func (t *cachingTransport[C, S]) load(ctx context.Context) (*C, error) {
 	case t.lock <- struct{}{}:
 		defer func() { <-t.lock }()
 	case <-ctx.Done():
-		return nil, ctx.Err()
+		return nil, context.Cause(ctx)
 	}
 
 	cred, err := t.loader.Load(ctx, t.secretName)
