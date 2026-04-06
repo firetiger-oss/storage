@@ -8,7 +8,6 @@ import (
 
 	"github.com/firetiger-oss/storage"
 	"github.com/firetiger-oss/storage/memory"
-	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
@@ -17,41 +16,39 @@ import (
 func TestCacheMetrics(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	otel.SetMeterProvider(provider)
 	t.Cleanup(func() {
-		otel.SetMeterProvider(sdkmetric.NewMeterProvider())
 		_ = provider.Shutdown(context.Background())
 	})
 
+	cache := newTestCache(storage.CacheMeterProvider(provider))
+	exerciseBucket(t, cache.AdaptBucket(memory.NewBucket()))
+	assertCacheMetrics(t, reader, cache)
+}
+
+func TestCacheMetricsWithoutProvider(t *testing.T) {
 	cache := newTestCache()
 	exerciseBucket(t, cache.AdaptBucket(memory.NewBucket()))
 
-	assertCacheMetrics(t, reader, cache)
+	objectsStat, infosStat, pagesStat := cache.Stat()
+	if objectsStat == (storage.CacheStat{}) {
+		t.Fatal("expected object cache stats without metrics provider")
+	}
+	if infosStat == (storage.CacheStat{}) {
+		t.Fatal("expected info cache stats without metrics provider")
+	}
+	if pagesStat == (storage.CacheStat{}) {
+		t.Fatal("expected page cache stats without metrics provider")
+	}
 }
 
-func TestCacheMetricsProviderInstalledAfterCacheCreation(t *testing.T) {
-	cache := newTestCache()
-	bucket := cache.AdaptBucket(memory.NewBucket())
-
-	reader := sdkmetric.NewManualReader()
-	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	otel.SetMeterProvider(provider)
-	t.Cleanup(func() {
-		otel.SetMeterProvider(sdkmetric.NewMeterProvider())
-		_ = provider.Shutdown(context.Background())
-	})
-
-	exerciseBucket(t, bucket)
-	assertCacheMetrics(t, reader, cache)
-}
-
-func newTestCache() *storage.Cache {
-	return storage.NewCache(
+func newTestCache(options ...storage.CacheOption) *storage.Cache {
+	options = append([]storage.CacheOption{
 		storage.ObjectCacheSize(1024),
 		storage.ObjectInfoCacheSize(1024),
 		storage.ObjectPageCacheSize(1024),
 		storage.CachePageSize(4),
-	)
+	}, options...)
+	return storage.NewCache(options...)
 }
 
 func exerciseBucket(t *testing.T, bucket storage.Bucket) {

@@ -7,7 +7,6 @@ import (
 	"runtime"
 	"weak"
 
-	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 )
@@ -28,9 +27,8 @@ type cacheMetricKind struct {
 	stat func(*Cache) CacheStat
 }
 
-func registerCacheMetrics(c *Cache) {
-	meterProvider := otel.GetMeterProvider()
-	if fmt.Sprintf("%T", meterProvider) == "*global.meterProvider" {
+func registerCacheMetrics(c *Cache, meterProvider metric.MeterProvider) {
+	if meterProvider == nil {
 		return
 	}
 
@@ -94,15 +92,6 @@ func registerCacheMetrics(c *Cache) {
 
 	c.metricsRegistration = registration
 	runtime.AddCleanup(c, unregisterCacheMetrics, registration)
-}
-
-func (c *Cache) ensureMetricsRegistered() {
-	c.metricsMutex.Lock()
-	defer c.metricsMutex.Unlock()
-	if c.metricsRegistration != nil {
-		return
-	}
-	registerCacheMetrics(c)
 }
 
 func unregisterCacheMetrics(registration metric.Registration) {

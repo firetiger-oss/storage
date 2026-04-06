@@ -6,7 +6,6 @@ import (
 	"context"
 	"io"
 	"iter"
-	"sync"
 	"time"
 
 	"github.com/firetiger-oss/concurrent"
@@ -57,6 +56,11 @@ func CacheTTL(d time.Duration) CacheOption {
 	return func(cache *Cache) { cache.ttl = d }
 }
 
+// CacheMeterProvider enables cache metrics using the provided MeterProvider.
+func CacheMeterProvider(provider metric.MeterProvider) CacheOption {
+	return func(cache *Cache) { registerCacheMetrics(cache, provider) }
+}
+
 // Cache is an in-memory cache for objects read from a Bucket.
 type Cache struct {
 	pages    cache.TTL[objectRange, cachedObject]
@@ -65,7 +69,6 @@ type Cache struct {
 	pageSize int64
 	ttl      time.Duration
 
-	metricsMutex        sync.Mutex
 	metricsRegistration metric.Registration
 }
 
@@ -130,7 +133,6 @@ type CacheStat struct {
 
 // Stat returns statistics about the cache, including the page size, number of
 func (c *Cache) Stat() (objects, infos, pages CacheStat) {
-	c.ensureMetricsRegistered()
 	return CacheStat(c.objects.Stat()), CacheStat(c.infos.Stat()), CacheStat(c.pages.Stat())
 }
 
@@ -159,7 +161,6 @@ func (c *cachedBucket) Create(ctx context.Context) error {
 }
 
 func (c *cachedBucket) HeadObject(ctx context.Context, key string) (ObjectInfo, error) {
-	c.ensureMetricsRegistered()
 	info, _, err := c.infos.Load(key, time.Now(), false, func() (int64, ObjectInfo, time.Time, error) {
 		object, err := c.bucket.HeadObject(ctx, key)
 		size := int64(0)
@@ -171,7 +172,6 @@ func (c *cachedBucket) HeadObject(ctx context.Context, key string) (ObjectInfo, 
 }
 
 func (c *cachedBucket) GetObject(ctx context.Context, key string, options ...GetOption) (io.ReadCloser, ObjectInfo, error) {
-	c.ensureMetricsRegistered()
 	var getOptions = NewGetOptions(options...)
 	var object cachedObject
 	var err error
@@ -312,7 +312,6 @@ func (c *cachedBucket) GetObject(ctx context.Context, key string, options ...Get
 }
 
 func (c *cachedBucket) PutObject(ctx context.Context, key string, r io.Reader, options ...PutOption) (ObjectInfo, error) {
-	c.ensureMetricsRegistered()
 	info, err := c.bucket.PutObject(ctx, key, r, options...)
 	c.objects.Drop(key)
 	c.infos.Drop(key)
@@ -320,14 +319,12 @@ func (c *cachedBucket) PutObject(ctx context.Context, key string, r io.Reader, o
 }
 
 func (c *cachedBucket) DeleteObject(ctx context.Context, key string) error {
-	c.ensureMetricsRegistered()
 	c.objects.Drop(key)
 	c.infos.Drop(key)
 	return c.bucket.DeleteObject(ctx, key)
 }
 
 func (c *cachedBucket) DeleteObjects(ctx context.Context, objects iter.Seq2[string, error]) iter.Seq2[string, error] {
-	c.ensureMetricsRegistered()
 	return c.bucket.DeleteObjects(ctx, func(yield func(string, error) bool) {
 		for key, err := range objects {
 			c.objects.Drop(key)
@@ -340,7 +337,6 @@ func (c *cachedBucket) DeleteObjects(ctx context.Context, objects iter.Seq2[stri
 }
 
 func (c *cachedBucket) CopyObject(ctx context.Context, from, to string, options ...PutOption) error {
-	c.ensureMetricsRegistered()
 	// Invalidate destination cache entry
 	c.objects.Drop(to)
 	c.infos.Drop(to)
