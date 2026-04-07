@@ -4,6 +4,7 @@ type LRU[K comparable, V any] struct {
 	queue list[item[K, V]]
 	cache map[K]*element[item[K, V]]
 
+	Entries   int64
 	Size      int64
 	Hits      int64
 	Misses    int64
@@ -19,6 +20,8 @@ type item[K comparable, V any] struct {
 func (c *LRU[K, V]) Clear() {
 	c.queue = list[item[K, V]]{}
 	c.cache = nil
+	c.Entries = 0
+	c.Size = 0
 }
 
 func (c *LRU[K, V]) Lookup(k K) (v V, ok bool) {
@@ -46,6 +49,7 @@ func (c *LRU[K, V]) Insert(k K, v V, size int64) bool {
 	elem := &element[item[K, V]]{
 		item: item[K, V]{key: k, value: v, size: size},
 	}
+	c.Entries++
 	c.Size += size
 	c.cache[k] = elem
 	c.queue.pushFront(elem)
@@ -56,6 +60,7 @@ func (c *LRU[K, V]) Delete(k K) {
 	if elem := c.cache[k]; elem != nil {
 		delete(c.cache, k)
 		c.queue.remove(elem)
+		c.Entries--
 		c.Size -= elem.item.size
 		c.Evictions++
 	}
@@ -67,6 +72,7 @@ func (c *LRU[K, V]) Evict() (k K, v V, size int64, ok bool) {
 		return
 	}
 	delete(c.cache, elem.item.key)
+	c.Entries--
 	c.Size -= elem.item.size
 	c.Evictions++
 	return elem.item.key, elem.item.value, elem.item.size, true

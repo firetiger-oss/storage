@@ -14,6 +14,7 @@ func init() {
 
 type Stat struct {
 	Limit     int64
+	Entries   int64
 	Size      int64
 	Hits      int64
 	Misses    int64
@@ -41,6 +42,7 @@ type LRU[K comparable, V any] struct {
 func (c *LRU[K, V]) Stat() (stat Stat) {
 	c.mutex.Lock()
 	stat.Limit = c.Limit
+	stat.Entries = c.cache.Entries
 	stat.Size = c.cache.Size
 	stat.Hits = c.cache.Hits
 	stat.Misses = c.cache.Misses
