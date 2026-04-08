@@ -5,19 +5,23 @@ Batteries-included toolkit for building applications on top of object storage in
 ## Motivation
 
 Object storage is one of the most powerful building blocks available to
-application developers — infinitely scalable, durable, and cheap. Yet building
-on it in Go means picking a provider SDK, wiring up retries, caching, and
-observability, and hoping you never need to swap backends or test offline.
+application developers — infinitely scalable, durable, and cheap. There are
+already Go packages that abstract away provider differences behind a common
+interface, and that part is relatively straightforward. What's harder is
+everything else you need to actually build on top of object storage: presigned
+URLs, caching layers, bucket notifications, secret storage, observability,
+and composable middleware — the kind of infrastructure that every serious
+application ends up reimplementing from scratch.
 
-The `storage` package removes that friction. A single
-[`Bucket`](https://pkg.go.dev/github.com/firetiger-oss/storage#Bucket) interface
-gives you S3, Google Cloud Storage, the local file system, HTTP, and in-memory
-storage through one API — pick a URI, import a driver, and go. On top of that
-foundation the package ships composable adapters for caching, prefixing,
-instrumentation, read-only access, and more, so the pieces you usually have to
-build yourself are already there. Streaming operations return `iter.Seq2`
-iterators that plug straight into range loops and the standard library, keeping
-everything idiomatic and zero-allocation where it counts.
+The `storage` package ships all of that in one cohesive toolkit. At its core is
+a single [`Bucket`](https://pkg.go.dev/github.com/firetiger-oss/storage#Bucket)
+interface covering S3, Google Cloud Storage, the local file system, HTTP, and
+in-memory storage — pick a URI, import a driver, and go. But the real value is
+what's built on top: composable adapters for caching, prefixing,
+instrumentation, and read-only access; first-class presigned URL support across
+backends; bucket change notifications; and a secret management layer. Streaming
+operations return `iter.Seq2` iterators that plug straight into range loops and
+the standard library, keeping everything idiomatic.
 
 Whether you are building a data pipeline, a media service, or a CLI tool that
 needs to talk to the cloud, `storage` is designed to let you focus on your
