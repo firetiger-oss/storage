@@ -1,203 +1,114 @@
-# storage
+# storage [![CI](https://github.com/firetiger-oss/storage/actions/workflows/ci.yml/badge.svg)](https://github.com/firetiger-oss/storage/actions/workflows/ci.yml) [![Go Reference](https://pkg.go.dev/badge/github.com/firetiger-oss/storage.svg)](https://pkg.go.dev/github.com/firetiger-oss/storage)
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/firetiger-oss/storage.svg)](https://pkg.go.dev/github.com/firetiger-oss/storage)
-[![CI](https://github.com/firetiger-oss/storage/actions/workflows/ci.yml/badge.svg)](https://github.com/firetiger-oss/storage/actions/workflows/ci.yml)
-[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+Batteries-included toolkit for building applications on top of object storage in Go.
 
-Go package to interact with cloud object storage providers using a unified interface.
+## Motivation
 
-For full API documentation, see [pkg.go.dev](https://pkg.go.dev/github.com/firetiger-oss/storage).
+Object storage is one of the most powerful building blocks available to
+application developers — infinitely scalable, durable, and cheap. There are
+already Go packages that abstract away provider differences behind a common
+interface, and that part is relatively straightforward. What's harder is
+everything else you need to actually build on top of object storage: presigned
+URLs, caching layers, bucket notifications, secret storage, observability,
+and composable middleware — the kind of infrastructure that every serious
+application ends up reimplementing from scratch.
 
-## Overview
+The `storage` package ships all of that in one cohesive toolkit. At its core is
+a single [`Bucket`](https://pkg.go.dev/github.com/firetiger-oss/storage#Bucket)
+interface covering S3, Google Cloud Storage, the local file system, HTTP, and
+in-memory storage — pick a URI, import a driver, and go. But the real value is
+what's built on top: composable adapters for caching, prefixing,
+instrumentation, and read-only access; first-class presigned URL support across
+backends; bucket change notifications; and a secret management layer. Streaming
+operations return `iter.Seq2` iterators that plug straight into range loops and
+the standard library, keeping everything idiomatic.
 
-This package provides a unified interface for working with different object
-storage systems, including Amazon S3, Google Cloud Storage, local file system,
-and in-memory storage. The API is modeled after the S3 object storage interface
-as the common denominator.
+Whether you are building a data pipeline, a media service, or a CLI tool that
+needs to talk to the cloud, `storage` is designed to let you focus on your
+application instead of the plumbing underneath it.
 
-## Features
+## Usage
 
-- **Unified Interface**: Single API for multiple storage backends
-- **Multiple Backends**: S3, Google Cloud Storage, local file system, and in-memory storage
-- **Caching**: Built-in caching layer with LRU and TTL support
-- **Concurrency**: Thread-safe operations with concurrent utilities
-- **Advanced Operations**: 
-  - Presigned URLs
-  - Range reads
-  - Metadata support
-  - Multipart uploads
-  - Object watching (file system)
-- **Adapters**: Pluggable adapter system for extending functionality
-- **URI Support**: Consistent URI-based addressing across all backends
+### [storage.LoadBucket](https://pkg.go.dev/github.com/firetiger-oss/storage#LoadBucket)
 
-## Installation
-
-```bash
-go get github.com/firetiger-oss/storage
-```
-
-## Quick Start
-
-### Basic Usage
+Load a bucket by URI. The scheme selects the backend — import the backend
+package for side effects to register it.
 
 ```go
-package main
-
 import (
-    "context"
-    "fmt"
-    "strings"
-    
     "github.com/firetiger-oss/storage"
-    // Import the backend you need
-    _ "github.com/firetiger-oss/storage/s3"
+    _ "github.com/firetiger-oss/storage/s3"  // register s3:// scheme
+    _ "github.com/firetiger-oss/storage/gs"  // register gs:// scheme
+    _ "github.com/firetiger-oss/storage/file" // register file:// scheme
 )
 
-func main() {
-    ctx := context.Background()
-    
-    // Get an object
-    reader, info, err := storage.GetObject(ctx, "s3://my-bucket/path/to/file.txt")
-    if err != nil {
-        panic(err)
-    }
-    defer reader.Close()
-    
-    // Put an object
-    content := strings.NewReader("Hello, World!")
-    _, err = storage.PutObject(ctx, "s3://my-bucket/path/to/new-file.txt", content)
-    if err != nil {
-        panic(err)
-    }
-    
-    // List objects
-    for object, err := range storage.ListObjects(ctx, "s3://my-bucket/path/") {
-        if err != nil {
-            panic(err)
-        }
-        fmt.Printf("Key: %s, Size: %d\n", object.Key, object.Size)
-    }
-}
-```
-
-### Working with Buckets
-
-```go
-// Load a specific bucket
 bucket, err := storage.LoadBucket(ctx, "s3://my-bucket")
-if err != nil {
-    panic(err)
-}
-
-// Use bucket methods directly
-info, err := bucket.HeadObject(ctx, "file.txt")
-if err != nil {
-    panic(err)
-}
 ```
 
-## Configuration
+### [storage.GetObject](https://pkg.go.dev/github.com/firetiger-oss/storage#GetObject) / [storage.PutObject](https://pkg.go.dev/github.com/firetiger-oss/storage#PutObject)
 
-### AWS S3 Configuration
-Follows standard AWS SDK configuration:
-- Environment variables (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, etc.)
-- AWS credentials file
-- IAM roles
+Top-level convenience functions operate directly on object URIs without
+loading a bucket first.
 
-### Google Cloud Storage Configuration
-- Service account key file
-- Application Default Credentials
-- Environment variable `GOOGLE_APPLICATION_CREDENTIALS`
-
-## Advanced Usage
-
-### Options
-
-#### Get Options
 ```go
-// Range read
-reader, info, err := storage.GetObject(ctx, "s3://bucket/file.txt", 
-    storage.BytesRange(0, 1024))
-```
-
-#### Put Options
-```go
-content := strings.NewReader("data")
-info, err := storage.PutObject(ctx, "s3://bucket/file.txt", content,
+// Write an object
+_, err := storage.PutObject(ctx, "s3://my-bucket/path/to/file.txt",
+    strings.NewReader("Hello, World!"),
     storage.ContentType("text/plain"),
-    storage.CacheControl("max-age=3600"),
-    storage.Metadata("author", "example"))
+)
+
+// Read it back
+reader, info, err := storage.GetObject(ctx, "s3://my-bucket/path/to/file.txt")
+defer reader.Close()
 ```
 
-#### List Options
-```go
-for object, err := range storage.ListObjects(ctx, "s3://bucket/",
-    storage.KeyPrefix("logs/"),
-    storage.MaxKeys(100)) {
-    // Process objects
-}
-```
+### [storage.ListObjects](https://pkg.go.dev/github.com/firetiger-oss/storage#ListObjects)
 
-### Adapters
-
-Create custom adapters to extend functionality:
+List objects under a prefix. Results stream as an iterator.
 
 ```go
-// Add caching to any bucket
-cache := storage.NewCache()
-cached := storage.AdaptBucket(bucket, cache)
-
-// Add read-only protection
-readOnly := storage.ReadOnlyBucket(bucket)
-
-// Add prefix
-prefixed := storage.AdaptBucket(bucket, storage.WithPrefix("data/"))
-
-// Add instrumentation
-instrumented := storage.AdaptBucket(bucket, storage.WithInstrumentation())
-```
-
-### Custom Registry
-
-```go
-// Create a custom registry
-registry := storage.RegistryFunc(func(ctx context.Context, uri string) (storage.Bucket, error) {
-    // Custom bucket loading logic
-    return bucket, nil
-})
-
-// Use with specific registry
-info, err := storage.HeadObjectAt(ctx, registry, "custom://bucket/file")
-```
-
-### Object Watching (File System Only)
-
-```go
-import _ "github.com/firetiger-oss/storage/file"
-
-bucket, _ := storage.LoadBucket(ctx, "file://")
-for object, err := range bucket.WatchObjects(ctx, storage.KeyPrefix("logs/")) {
+for object, err := range storage.ListObjects(ctx, "s3://my-bucket/logs/") {
     if err != nil {
-        panic(err)
+        return err
     }
-    if object.Size < 0 {
-        fmt.Printf("Object deleted: %s\n", object.Key)
-    } else {
-        fmt.Printf("Object changed: %s\n", object.Key)
-    }
+    fmt.Printf("%s (%d bytes)\n", object.Key, object.Size)
 }
+```
+
+### Backends
+
+| Backend | URI | Import |
+|---------|-----|--------|
+| Amazon S3 | `s3://bucket/prefix` | `_ "github.com/firetiger-oss/storage/s3"` |
+| Google Cloud Storage | `gs://bucket/prefix` | `_ "github.com/firetiger-oss/storage/gs"` |
+| Local file system | `file:///path` | `_ "github.com/firetiger-oss/storage/file"` |
+| In-memory | `:memory:` | `_ "github.com/firetiger-oss/storage/memory"` |
+| HTTP (S3-compatible) | `http://host/path` | `_ "github.com/firetiger-oss/storage/http"` |
+
+### [storage.AdaptBucket](https://pkg.go.dev/github.com/firetiger-oss/storage#AdaptBucket)
+
+Wrap a bucket with adapters to add caching, prefixing, instrumentation,
+or read-only protection.
+
+```go
+bucket = storage.AdaptBucket(bucket,
+    storage.WithPrefix("data/"),
+    storage.NewCache(),
+    storage.WithInstrumentation(),
+)
+
+readOnly := storage.ReadOnlyBucket(bucket)
 ```
 
 ## Contributing
 
-Contributions are welcome! Here's how to get started:
+Contributions are welcome! To get started:
 
-1. Fork the repository and clone it locally
-2. Run tests: `go test ./...`
-3. Code style is enforced by `gofmt` in CI
-4. To add a new storage backend: create a new package, implement the `Bucket` interface, and register it via `storage.Register` in an `init()` function (see existing backends for examples)
-5. Open a pull request against `main`
+1. Ensure you have Go 1.25+ installed
+2. Run `go test ./...` to verify tests pass
+
+Please report bugs and feature requests via [GitHub Issues](https://github.com/firetiger-oss/storage/issues).
 
 ## License
 
-This project is licensed under the Apache License 2.0 — see the [LICENSE](LICENSE) file for details.
+This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
