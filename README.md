@@ -1,21 +1,27 @@
 # storage [![CI](https://github.com/firetiger-oss/storage/actions/workflows/ci.yml/badge.svg)](https://github.com/firetiger-oss/storage/actions/workflows/ci.yml) [![Go Reference](https://pkg.go.dev/badge/github.com/firetiger-oss/storage.svg)](https://pkg.go.dev/github.com/firetiger-oss/storage)
 
-Unified interface for cloud object storage in Go.
+Batteries-included toolkit for building applications on top of object storage in Go.
 
 ## Motivation
 
-Go applications that interact with object storage often end up coupled to a
-specific provider's SDK — AWS SDK for S3, Google Cloud client libraries for GCS,
-`os` calls for local files — each with its own API surface, error handling, and
-configuration. Switching providers, testing with local storage, or combining
-multiple backends requires significant refactoring.
+Object storage is one of the most powerful building blocks available to
+application developers — infinitely scalable, durable, and cheap. Yet building
+on it in Go means picking a provider SDK, wiring up retries, caching, and
+observability, and hoping you never need to swap backends or test offline.
 
-The `storage` package defines a single [`Bucket`](https://pkg.go.dev/github.com/firetiger-oss/storage#Bucket)
-interface modeled on S3 as the industry standard for object storage. Backend
-implementations register themselves via URI scheme, so application code stays
-the same regardless of where objects live. Streaming operations return
-`iter.Seq2` iterators, composing naturally with range loops and the standard
-library.
+The `storage` package removes that friction. A single
+[`Bucket`](https://pkg.go.dev/github.com/firetiger-oss/storage#Bucket) interface
+gives you S3, Google Cloud Storage, the local file system, HTTP, and in-memory
+storage through one API — pick a URI, import a driver, and go. On top of that
+foundation the package ships composable adapters for caching, prefixing,
+instrumentation, read-only access, and more, so the pieces you usually have to
+build yourself are already there. Streaming operations return `iter.Seq2`
+iterators that plug straight into range loops and the standard library, keeping
+everything idiomatic and zero-allocation where it counts.
+
+Whether you are building a data pipeline, a media service, or a CLI tool that
+needs to talk to the cloud, `storage` is designed to let you focus on your
+application instead of the plumbing underneath it.
 
 ## Usage
 
