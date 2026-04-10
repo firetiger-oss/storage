@@ -75,17 +75,6 @@ for object, err := range storage.ListObjects(ctx, "s3://my-bucket/logs/") {
 }
 ```
 
-### Backends
-
-| Backend | URI | Import |
-|---------|-----|--------|
-| Amazon S3 | `s3://bucket/prefix` | `_ "github.com/firetiger-oss/storage/s3"` |
-| Cloudflare R2 | `r2://bucket/prefix` | `_ "github.com/firetiger-oss/storage/r2"` |
-| Google Cloud Storage | `gs://bucket/prefix` | `_ "github.com/firetiger-oss/storage/gs"` |
-| Local file system | `file:///path` | `_ "github.com/firetiger-oss/storage/file"` |
-| In-memory | `:memory:` | `_ "github.com/firetiger-oss/storage/memory"` |
-| HTTP (S3-compatible) | `http://host/path` | `_ "github.com/firetiger-oss/storage/http"` |
-
 ### [storage.AdaptBucket](https://pkg.go.dev/github.com/firetiger-oss/storage#AdaptBucket)
 
 Wrap a bucket with adapters to add caching, prefixing, instrumentation,
@@ -100,6 +89,17 @@ bucket = storage.AdaptBucket(bucket,
 
 readOnly := storage.ReadOnlyBucket(bucket)
 ```
+
+### Backends
+
+| Backend | URI | Import |
+|---------|-----|--------|
+| Amazon S3 | `s3://bucket/prefix` | `_ "github.com/firetiger-oss/storage/s3"` |
+| Cloudflare R2 | `r2://bucket/prefix` | `_ "github.com/firetiger-oss/storage/r2"` |
+| Google Cloud Storage | `gs://bucket/prefix` | `_ "github.com/firetiger-oss/storage/gs"` |
+| Local file system | `file:///path` | `_ "github.com/firetiger-oss/storage/file"` |
+| In-memory | `:memory:` | `_ "github.com/firetiger-oss/storage/memory"` |
+| HTTP (S3-compatible) | `http://host/path` | `_ "github.com/firetiger-oss/storage/http"` |
 
 ## Contributing
 
