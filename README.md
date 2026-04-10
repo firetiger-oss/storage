@@ -15,8 +15,8 @@ application ends up reimplementing from scratch.
 
 The `storage` package ships all of that in one cohesive toolkit. At its core is
 a single [`Bucket`](https://pkg.go.dev/github.com/firetiger-oss/storage#Bucket)
-interface covering S3, Google Cloud Storage, the local file system, HTTP, and
-in-memory storage — pick a URI, import a driver, and go. But the real value is
+interface covering S3, Cloudflare R2, Google Cloud Storage, the local file system,
+HTTP, and in-memory storage — pick a URI, import a driver, and go. But the real value is
 what's built on top: composable adapters for caching, prefixing,
 instrumentation, and read-only access; first-class presigned URL support across
 backends; bucket change notifications; and a secret management layer. Streaming
@@ -80,6 +80,7 @@ for object, err := range storage.ListObjects(ctx, "s3://my-bucket/logs/") {
 | Backend | URI | Import |
 |---------|-----|--------|
 | Amazon S3 | `s3://bucket/prefix` | `_ "github.com/firetiger-oss/storage/s3"` |
+| Cloudflare R2 | `r2://bucket/prefix` | `_ "github.com/firetiger-oss/storage/r2"` |
 | Google Cloud Storage | `gs://bucket/prefix` | `_ "github.com/firetiger-oss/storage/gs"` |
 | Local file system | `file:///path` | `_ "github.com/firetiger-oss/storage/file"` |
 | In-memory | `:memory:` | `_ "github.com/firetiger-oss/storage/memory"` |
