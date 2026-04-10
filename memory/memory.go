@@ -97,9 +97,11 @@ func (l *listener) notify(keys ...string) {
 		if l.startAfter > key {
 			continue
 		}
-		if l.delimiter != "" && strings.Contains(strings.TrimPrefix(key, l.prefix), l.delimiter) {
-			continue
-		}
+		// No delimiter filtering here: a write to a/b/c.json must wake a
+		// listener on prefix="a/" delimiter="/" because the write may create
+		// a new common-prefix entry "a/b/" that wasn't in the previous listing.
+		// WatchObjects deduplicates via currentObjects, so spurious wakes are
+		// harmless (they just trigger a cheap re-list).
 		select {
 		case l.wakeChan <- struct{}{}:
 		default:
