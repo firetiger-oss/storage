@@ -6,7 +6,6 @@ import (
 	"context"
 	"crypto/md5"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"io"
 	"iter"
@@ -20,9 +19,6 @@ import (
 	"github.com/firetiger-oss/storage/internal/sequtil"
 )
 
-var (
-	errNamedBucketNotSupported = errors.New("memory bucket does not support named buckets")
-)
 
 func init() {
 	storage.Register("memory", NewRegistry())
@@ -30,10 +26,14 @@ func init() {
 
 func NewRegistry() storage.Registry {
 	return storage.RegistryFunc(func(ctx context.Context, bucket string) (storage.Bucket, error) {
+		b := new(Bucket)
 		if bucket != "" {
-			return nil, errNamedBucketNotSupported
+			if !strings.HasSuffix(bucket, "/") {
+				bucket += "/"
+			}
+			return storage.Prefix(b, bucket), nil
 		}
-		return new(Bucket), nil
+		return b, nil
 	})
 }
 
