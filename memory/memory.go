@@ -19,7 +19,6 @@ import (
 	"github.com/firetiger-oss/storage/internal/sequtil"
 )
 
-
 func init() {
 	storage.Register("memory", NewRegistry())
 }
