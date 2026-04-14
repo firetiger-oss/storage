@@ -25,14 +25,22 @@ func (c *TTL[K, V]) Drop(ks ...K) {
 	c.lru().Drop(ks...)
 }
 
-func (c *TTL[K, V]) Load(key K, now time.Time, update bool, fetch func() (int64, V, time.Time, error)) (value V, expire time.Time, err error) {
+func (c *TTL[K, V]) Load(key K, now time.Time, fetch func() (int64, V, time.Time, error)) (value V, expire time.Time, err error) {
 	c.mutex.Lock()
 	entry, ok := c.cache.Lookup(key)
-	if ok && !update && (entry.expire.IsZero() || !now.After(entry.expire)) {
+	if ok && (entry.expire.IsZero() || !now.After(entry.expire)) {
 		c.mutex.Unlock()
 		return entry.value, entry.expire, nil
 	}
+	return c.fetchLocked(key, fetch)
+}
 
+func (c *TTL[K, V]) Reload(key K, now time.Time, fetch func() (int64, V, time.Time, error)) (value V, expire time.Time, err error) {
+	c.mutex.Lock()
+	return c.fetchLocked(key, fetch)
+}
+
+func (c *TTL[K, V]) fetchLocked(key K, fetch func() (int64, V, time.Time, error)) (value V, expire time.Time, err error) {
 	promise := c.lru().fetchLocked(key, func() (int64, ttlEntry[V], error) {
 		size, value, expire, err := fetch()
 		if err != nil {
@@ -41,7 +49,7 @@ func (c *TTL[K, V]) Load(key K, now time.Time, update bool, fetch func() (int64,
 		return size, ttlEntry[V]{value: value, expire: expire}, nil
 	})
 
-	entry, err = promise.Wait()
+	entry, err := promise.Wait()
 	if err != nil {
 		return value, expire, err
 	}
