@@ -1,5 +1,9 @@
 # storage [![CI](https://github.com/firetiger-oss/storage/actions/workflows/ci.yml/badge.svg)](https://github.com/firetiger-oss/storage/actions/workflows/ci.yml) [![Go Reference](https://pkg.go.dev/badge/github.com/firetiger-oss/storage.svg)](https://pkg.go.dev/github.com/firetiger-oss/storage)
 
+<p align="center">
+<img width="500" height="426" alt="storage" src="https://github.com/user-attachments/assets/2db1449f-af53-43ca-9bb3-7b42c43484b1" />
+</p>
+
 Batteries-included toolkit for building applications on top of object storage in Go.
 
 ## Motivation
