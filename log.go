@@ -23,7 +23,20 @@ func isTemporaryError(err error) bool {
 	return errors.As(err, &e) && e.Temporary()
 }
 
-func logLevelOf(err error) slog.Level {
+func logLevelOf(ctx context.Context, err error) slog.Level {
+	// A canceled context is almost always a caller-driven early termination
+	// (DuckDB closing a parquet reader after pruning a row group, a client
+	// aborting a stream, etc.), not a storage failure. Demote to DEBUG so it
+	// doesn't drown out real errors. DeadlineExceeded is intentionally left
+	// at ERROR — that one means a timeout actually fired.
+	if errors.Is(err, context.Canceled) {
+		return slog.LevelDebug
+	}
+	if ctx != nil {
+		if cause := context.Cause(ctx); cause != nil && !errors.Is(cause, ctx.Err()) && errors.Is(err, cause) {
+			return slog.LevelDebug
+		}
+	}
 	if isExpectedError(err) {
 		return slog.LevelDebug
 	}
@@ -62,7 +75,7 @@ func (b *loggedBucket) Access(ctx context.Context) error {
 	attrLocation := makeAttrLocation(b)
 	attrDuration := makeAttrDuration(start)
 	if err != nil {
-		b.logger.Log(ctx, logLevelOf(err), op, attrLocation, attrDuration, makeAttrError(err))
+		b.logger.Log(ctx, logLevelOf(ctx, err), op, attrLocation, attrDuration, makeAttrError(err))
 	} else {
 		b.logger.DebugContext(ctx, op, attrLocation, attrDuration)
 	}
@@ -78,7 +91,7 @@ func (b *loggedBucket) Create(ctx context.Context) error {
 	attrLocation := makeAttrLocation(b)
 	attrDuration := makeAttrDuration(start)
 	if err != nil {
-		b.logger.Log(ctx, logLevelOf(err), op, attrLocation, attrDuration, makeAttrError(err))
+		b.logger.Log(ctx, logLevelOf(ctx, err), op, attrLocation, attrDuration, makeAttrError(err))
 	} else {
 		b.logger.DebugContext(ctx, op, attrLocation, attrDuration)
 	}
@@ -94,7 +107,7 @@ func (b *loggedBucket) HeadObject(ctx context.Context, key string) (ObjectInfo, 
 	attrKey := makeAttrKey(b, key)
 	attrDuration := makeAttrDuration(start)
 	if err != nil {
-		b.logger.Log(ctx, logLevelOf(err), op, attrKey, attrDuration, makeAttrError(err))
+		b.logger.Log(ctx, logLevelOf(ctx, err), op, attrKey, attrDuration, makeAttrError(err))
 	} else {
 		attrSize := makeAttrSize(object.Size)
 		attrETag := makeAttrETag(object.ETag, "")
@@ -115,7 +128,7 @@ func (b *loggedBucket) GetObject(ctx context.Context, key string, options ...Get
 	if err != nil {
 		attrKey := makeAttrKey(b, key)
 		attrDuration := makeAttrDuration(start)
-		b.logger.Log(ctx, logLevelOf(err), "GetObject", attrKey, attrDuration, makeAttrError(err))
+		b.logger.Log(ctx, logLevelOf(ctx, err), "GetObject", attrKey, attrDuration, makeAttrError(err))
 	} else {
 		r = &loggedReadCloser{
 			bucket: b,
@@ -156,7 +169,7 @@ func (r *loggedReadCloser) Close() error {
 		attrOffset := makeAttrOffset(r.offset)
 		attrDuration := makeAttrDuration(r.start)
 		if err != nil && !errors.Is(err, io.EOF) {
-			r.bucket.logger.Log(r.ctx, logLevelOf(err), "GetObject", attrKey, attrSize, attrOffset, attrDuration, makeAttrError(err))
+			r.bucket.logger.Log(r.ctx, logLevelOf(r.ctx, err), "GetObject", attrKey, attrSize, attrOffset, attrDuration, makeAttrError(err))
 		} else {
 			r.bucket.logger.DebugContext(r.ctx, "GetObject", attrKey, attrSize, attrOffset, attrDuration)
 		}
@@ -176,7 +189,7 @@ func (b *loggedBucket) PutObject(ctx context.Context, key string, value io.Reade
 	attrContentType := makeAttrContentType(object.ContentType)
 	attrDuration := makeAttrDuration(start)
 	if err != nil {
-		b.logger.Log(ctx, logLevelOf(err), op, attrKey, attrSize, attrETag, attrContentType, attrDuration, makeAttrError(err))
+		b.logger.Log(ctx, logLevelOf(ctx, err), op, attrKey, attrSize, attrETag, attrContentType, attrDuration, makeAttrError(err))
 	} else {
 		b.logger.DebugContext(ctx, op, attrKey, attrSize, attrETag, attrContentType, attrDuration)
 	}
@@ -192,7 +205,7 @@ func (b *loggedBucket) DeleteObject(ctx context.Context, key string) error {
 	attrKey := makeAttrKey(b, key)
 	attrDuration := makeAttrDuration(start)
 	if err != nil {
-		b.logger.Log(ctx, logLevelOf(err), op, attrKey, attrDuration, makeAttrError(err))
+		b.logger.Log(ctx, logLevelOf(ctx, err), op, attrKey, attrDuration, makeAttrError(err))
 	} else {
 		b.logger.DebugContext(ctx, op, attrKey, attrDuration)
 	}
@@ -208,7 +221,7 @@ func (b *loggedBucket) DeleteObjects(ctx context.Context, objects iter.Seq2[stri
 			attrKey := makeAttrKey(b, key)
 			if err != nil {
 				hasError = true
-				b.logger.Log(ctx, logLevelOf(err), op, attrKey, makeAttrError(err))
+				b.logger.Log(ctx, logLevelOf(ctx, err), op, attrKey, makeAttrError(err))
 			}
 			if !yield(key, err) {
 				return
@@ -229,7 +242,7 @@ func (b *loggedBucket) CopyObject(ctx context.Context, from, to string, options 
 	attrTo := slog.String("to", to)
 	attrDuration := makeAttrDuration(start)
 	if err != nil {
-		b.logger.Log(ctx, logLevelOf(err), op, attrFrom, attrTo, attrDuration, makeAttrError(err))
+		b.logger.Log(ctx, logLevelOf(ctx, err), op, attrFrom, attrTo, attrDuration, makeAttrError(err))
 	} else {
 		b.logger.DebugContext(ctx, op, attrFrom, attrTo, attrDuration)
 	}
@@ -249,7 +262,7 @@ func (b *loggedBucket) ListObjects(ctx context.Context, options ...ListOption) i
 		for object, err := range b.bucket.ListObjects(ctx, options...) {
 			if err != nil {
 				attrDuration := makeAttrDuration(start)
-				b.logger.Log(ctx, logLevelOf(err), op, attrPrefix, attrDuration, makeAttrError(err))
+				b.logger.Log(ctx, logLevelOf(ctx, err), op, attrPrefix, attrDuration, makeAttrError(err))
 				yield(Object{}, err)
 				return
 			}
@@ -274,7 +287,7 @@ func (b *loggedBucket) WatchObjects(ctx context.Context, options ...ListOption) 
 
 		for object, err := range b.bucket.WatchObjects(ctx, options...) {
 			if err != nil {
-				b.logger.Log(ctx, logLevelOf(err), op, attrPrefix, makeAttrError(err))
+				b.logger.Log(ctx, logLevelOf(ctx, err), op, attrPrefix, makeAttrError(err))
 				yield(Object{}, err)
 				return
 			}
@@ -302,7 +315,7 @@ func (b *loggedBucket) PresignGetObject(ctx context.Context, key string, expirat
 		if errors.Is(err, ErrPresignNotSupported) {
 			b.logger.WarnContext(ctx, op, attrMethod, attrKey, attrDuration, makeAttrError(err))
 		} else {
-			b.logger.Log(ctx, logLevelOf(err), op, attrMethod, attrKey, attrDuration, makeAttrError(err))
+			b.logger.Log(ctx, logLevelOf(ctx, err), op, attrMethod, attrKey, attrDuration, makeAttrError(err))
 		}
 	} else {
 		b.logger.DebugContext(ctx, op, attrMethod, attrKey, attrDuration)
@@ -323,7 +336,7 @@ func (b *loggedBucket) PresignPutObject(ctx context.Context, key string, expirat
 		if errors.Is(err, ErrPresignNotSupported) {
 			b.logger.WarnContext(ctx, op, attrMethod, attrKey, attrDuration, makeAttrError(err))
 		} else {
-			b.logger.Log(ctx, logLevelOf(err), op, attrMethod, attrKey, attrDuration, makeAttrError(err))
+			b.logger.Log(ctx, logLevelOf(ctx, err), op, attrMethod, attrKey, attrDuration, makeAttrError(err))
 		}
 	} else {
 		b.logger.DebugContext(ctx, op, attrMethod, attrKey, attrDuration)
@@ -344,7 +357,7 @@ func (b *loggedBucket) PresignHeadObject(ctx context.Context, key string, expira
 		if errors.Is(err, ErrPresignNotSupported) {
 			b.logger.WarnContext(ctx, op, attrMethod, attrKey, attrDuration, makeAttrError(err))
 		} else {
-			b.logger.Log(ctx, logLevelOf(err), op, attrMethod, attrKey, attrDuration, makeAttrError(err))
+			b.logger.Log(ctx, logLevelOf(ctx, err), op, attrMethod, attrKey, attrDuration, makeAttrError(err))
 		}
 	} else {
 		b.logger.DebugContext(ctx, op, attrMethod, attrKey, attrDuration)
@@ -365,7 +378,7 @@ func (b *loggedBucket) PresignDeleteObject(ctx context.Context, key string, expi
 		if errors.Is(err, ErrPresignNotSupported) {
 			b.logger.WarnContext(ctx, op, attrMethod, attrKey, attrDuration, makeAttrError(err))
 		} else {
-			b.logger.Log(ctx, logLevelOf(err), op, attrMethod, attrKey, attrDuration, makeAttrError(err))
+			b.logger.Log(ctx, logLevelOf(ctx, err), op, attrMethod, attrKey, attrDuration, makeAttrError(err))
 		}
 	} else {
 		b.logger.DebugContext(ctx, op, attrMethod, attrKey, attrDuration)
