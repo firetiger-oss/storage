@@ -2,6 +2,7 @@ package file
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 
@@ -36,13 +37,27 @@ func renameIfNotExist(oldpath, newpath string) error {
 //
 // This is not as strong as the renameat2 path: if the process dies between
 // the link and the unlink the temp file remains on disk under its
-// tempFilePattern suffix. A separate janitor pass is expected to clean those
-// up; they are excluded from normal listings (see file.go).
+// tempFilePattern suffix. When unlink fails after the new link is created,
+// we best-effort remove newpath again so callers still see all-or-error
+// semantics.
 func linkThenUnlink(oldpath, newpath string) error {
-	if err := os.Link(oldpath, newpath); err != nil {
+	return linkThenUnlinkWithOps(oldpath, newpath, os.Link, os.Remove)
+}
+
+func linkThenUnlinkWithOps(oldpath, newpath string, link func(string, string) error, remove func(string) error) error {
+	if err := link(oldpath, newpath); err != nil {
 		return err
 	}
-	_ = os.Remove(oldpath)
+	if err := remove(oldpath); err != nil {
+		rollbackErr := remove(newpath)
+		if rollbackErr != nil {
+			return errors.Join(
+				fmt.Errorf("unlink temp source after link: %w", err),
+				fmt.Errorf("rollback published path: %w", rollbackErr),
+			)
+		}
+		return fmt.Errorf("unlink temp source after link: %w", err)
+	}
 	return nil
 }
 

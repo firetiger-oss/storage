@@ -64,6 +64,66 @@ func TestLinkThenUnlink(t *testing.T) {
 			t.Errorf("expected target unchanged, got %q", got)
 		}
 	})
+
+	t.Run("returns unlink error and rolls back target", func(t *testing.T) {
+		src := filepath.Join(dir, "rollback-src")
+		dst := filepath.Join(dir, "rollback-dst")
+		if err := os.WriteFile(src, []byte("hello"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		unlinkErr := errors.New("unlink failed")
+		err := linkThenUnlinkWithOps(src, dst, os.Link, func(name string) error {
+			if name == src {
+				return unlinkErr
+			}
+			return os.Remove(name)
+		})
+		if !errors.Is(err, unlinkErr) {
+			t.Fatalf("expected unlink error, got %v", err)
+		}
+
+		if _, statErr := os.Stat(src); statErr != nil {
+			t.Fatalf("expected source preserved after rollback, stat err = %v", statErr)
+		}
+		if _, statErr := os.Stat(dst); !errors.Is(statErr, fs.ErrNotExist) {
+			t.Fatalf("expected target removed by rollback, stat err = %v", statErr)
+		}
+	})
+
+	t.Run("returns unlink and rollback errors when rollback fails", func(t *testing.T) {
+		src := filepath.Join(dir, "rollback-fail-src")
+		dst := filepath.Join(dir, "rollback-fail-dst")
+		if err := os.WriteFile(src, []byte("hello"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		unlinkErr := errors.New("unlink failed")
+		rollbackErr := errors.New("rollback failed")
+		err := linkThenUnlinkWithOps(src, dst, os.Link, func(name string) error {
+			switch name {
+			case src:
+				return unlinkErr
+			case dst:
+				return rollbackErr
+			default:
+				return os.Remove(name)
+			}
+		})
+		if !errors.Is(err, unlinkErr) {
+			t.Fatalf("expected unlink error, got %v", err)
+		}
+		if !errors.Is(err, rollbackErr) {
+			t.Fatalf("expected rollback error, got %v", err)
+		}
+
+		if _, statErr := os.Stat(src); statErr != nil {
+			t.Fatalf("expected source to remain, stat err = %v", statErr)
+		}
+		if _, statErr := os.Stat(dst); statErr != nil {
+			t.Fatalf("expected target to remain when rollback fails, stat err = %v", statErr)
+		}
+	})
 }
 
 func TestIsRenameFlagUnsupported(t *testing.T) {
