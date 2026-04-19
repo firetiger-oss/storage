@@ -15,6 +15,7 @@ import (
 
 	"github.com/firetiger-oss/storage"
 	"github.com/firetiger-oss/storage/gs"
+	storagehttp "github.com/firetiger-oss/storage/http"
 	"github.com/firetiger-oss/storage/internal/sequtil"
 	"github.com/firetiger-oss/storage/uri"
 )
@@ -376,6 +377,27 @@ func TestStorage(t *testing.T, loadBucket func(*testing.T) (storage.Bucket, erro
 		{
 			scenario: "PutObject with mismatched ContentLength is rejected and does not store the body",
 			function: testStoragePutObjectContentLengthMismatch,
+			skipIf: func(bucket storage.Bucket) (bool, string) {
+				if _, ok := bucket.(*gs.Bucket); ok {
+					// Real GCS enforces Content-Length on the wire;
+					// the fake-gcs-server we run tests against is
+					// permissive. The HTTP layer doesn't reimplement
+					// validation that the destination already does.
+					return true, "fake-gcs-server does not enforce Content-Length; real GCS does"
+				}
+				if _, ok := bucket.(*storagehttp.Bucket); ok {
+					// The backend (memory) here CAN validate. What
+					// can't happen is the caller's explicit
+					// ContentLength(999) reaching it: Go's transport
+					// auto-sets the wire Content-Length from the
+					// body's Len() (the actual length), so the
+					// declared mismatch is erased before the request
+					// goes out. A real mismatch is only observable
+					// from a misbehaving non-Go client.
+					return true, "Go HTTP transport overwrites caller's declared Content-Length with the body's actual length"
+				}
+				return false, ""
+			},
 		},
 	}
 

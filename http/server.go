@@ -369,9 +369,10 @@ func handlePUT(w http.ResponseWriter, r *http.Request, b storage.Bucket, h *Hand
 	options = appendIfNotEmpty(options, r.Header, "If-Match", storage.IfMatch)
 	options = appendIfNotEmpty(options, r.Header, "If-None-Match", storage.IfNoneMatch)
 	if r.ContentLength >= 0 {
-		// Forward the wire-declared length to the backend so it can
-		// reject mismatched bodies. http.Request.Body itself doesn't
-		// expose its length to PutOptions.ContentLength's probes.
+		// Plumb the wire-declared length through to the backend so it
+		// can validate (same pattern as the other header forwards
+		// above). The HTTP layer itself doesn't reimplement the
+		// check — the backend does.
 		options = append(options, storage.ContentLength(r.ContentLength))
 	}
 

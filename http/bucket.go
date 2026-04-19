@@ -298,14 +298,6 @@ func (b *Bucket) PutObject(ctx context.Context, key string, value io.Reader, opt
 	if sum, ok := putOptions.ChecksumSHA256(); ok {
 		req.Header.Set("x-amz-checksum-sha256", base64.StdEncoding.EncodeToString(sum[:]))
 	}
-	// Honour an explicit ContentLength on the wire so the server can
-	// reject mismatched bodies (and so the Go transport doesn't
-	// silently substitute the body's own Len()).
-	if contentLength, err := putOptions.ContentLength(value); err != nil {
-		return storage.ObjectInfo{}, makeError(req, err)
-	} else if contentLength >= 0 {
-		req.ContentLength = contentLength
-	}
 
 	res, err := b.client.Do(req)
 	if err != nil {
