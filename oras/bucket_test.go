@@ -386,27 +386,45 @@ func TestReadOnlyBucketWatchObjectsExitsOnContextCancel(t *testing.T) {
 	}
 }
 
-func TestReadOnlyBucketImageIndexRejected(t *testing.T) {
+// Regression: only the standard image manifest media type is
+// supported. Other shapes (image index, OCI artifact manifest with
+// `blobs` instead of `layers`, Docker manifest list) cannot be decoded
+// as ocispec.Manifest and would silently look like an empty bucket if
+// we let them through. They must surface errdef.ErrUnsupported.
+func TestReadOnlyBucketRejectsNonImageManifestMediaTypes(t *testing.T) {
 	ctx := t.Context()
 	target := storageoras.New(memory.NewBucket())
 
-	indexBody := []byte(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.index.v1+json","manifests":[]}`)
-	indexDesc := ocispec.Descriptor{
-		MediaType: ocispec.MediaTypeImageIndex,
-		Digest:    digest.FromBytes(indexBody),
-		Size:      int64(len(indexBody)),
-	}
-	if err := target.Push(ctx, indexDesc, bytes.NewReader(indexBody)); err != nil {
-		t.Fatalf("push index: %v", err)
-	}
-	if err := target.Tag(ctx, indexDesc, "multi"); err != nil {
-		t.Fatalf("tag: %v", err)
-	}
+	for _, mediaType := range []string{
+		ocispec.MediaTypeImageIndex,
+		"application/vnd.oci.artifact.manifest.v1+json",
+		"application/vnd.docker.distribution.manifest.list.v2+json",
+		"application/vnd.docker.distribution.manifest.v2+json",
+	} {
+		t.Run(mediaType, func(t *testing.T) {
+			body := []byte(`{}`)
+			desc := ocispec.Descriptor{
+				MediaType: mediaType,
+				Digest:    digest.FromBytes(body),
+				Size:      int64(len(body)),
+			}
+			if err := target.Push(ctx, desc, bytes.NewReader(body)); err != nil {
+				t.Fatalf("push: %v", err)
+			}
+			tag := "tag-" + digest.FromBytes([]byte(mediaType)).Encoded()[:8]
+			if err := target.Tag(ctx, desc, tag); err != nil {
+				t.Fatalf("tag: %v", err)
+			}
 
-	bucket := storageoras.NewReadOnlyBucket(target, "multi")
-	err := bucket.Access(ctx)
-	if !errors.Is(err, errdef.ErrUnsupported) {
-		t.Fatalf("Access on image index = %v; want errdef.ErrUnsupported", err)
+			bucket := storageoras.NewReadOnlyBucket(target, tag)
+			if err := bucket.Access(ctx); !errors.Is(err, errdef.ErrUnsupported) {
+				t.Fatalf("Access on %s = %v; want errdef.ErrUnsupported", mediaType, err)
+			}
+			// And lazy I/O paths must agree.
+			if _, err := bucket.HeadObject(ctx, "anything"); !errors.Is(err, errdef.ErrUnsupported) {
+				t.Fatalf("HeadObject on %s = %v; want errdef.ErrUnsupported", mediaType, err)
+			}
+		})
 	}
 }
 
@@ -509,6 +527,53 @@ func TestReadOnlyBucketListStartAfterRespectsCollapsedPrefixes(t *testing.T) {
 	}
 	if !slices.Equal(page2, []string{"b/"}) {
 		t.Fatalf("page 2 = %v; want [b/] (must not repeat a/)", page2)
+	}
+}
+
+// Regression: every bucket method must honour a cancelled context
+// before short-circuiting with ErrBucketReadOnly or
+// ErrPresignNotSupported, otherwise upper layers retry/log the wrong
+// failure mode for aborted requests. Matches the cancellation
+// contract enforced by other backends in this repo.
+func TestReadOnlyBucketHonoursCanceledContext(t *testing.T) {
+	target := storageoras.New(memory.NewBucket())
+	pushArtifact(t, target, "v1", map[string]string{"x": "x"}, nil)
+	bucket := storageoras.NewReadOnlyBucket(target, "v1")
+
+	canceledErr := errors.New("test-cancel")
+	ctx, cancel := context.WithCancelCause(t.Context())
+	cancel(canceledErr)
+
+	if err := bucket.Create(ctx); !errors.Is(err, canceledErr) {
+		t.Errorf("Create = %v; want canceledErr", err)
+	}
+	if _, err := bucket.PutObject(ctx, "x", bytes.NewReader(nil)); !errors.Is(err, canceledErr) {
+		t.Errorf("PutObject = %v; want canceledErr", err)
+	}
+	if err := bucket.DeleteObject(ctx, "x"); !errors.Is(err, canceledErr) {
+		t.Errorf("DeleteObject = %v; want canceledErr", err)
+	}
+	if err := bucket.CopyObject(ctx, "x", "y"); !errors.Is(err, canceledErr) {
+		t.Errorf("CopyObject = %v; want canceledErr", err)
+	}
+
+	for _, err := range bucket.DeleteObjects(ctx, func(yield func(string, error) bool) { yield("x", nil) }) {
+		if !errors.Is(err, canceledErr) {
+			t.Errorf("DeleteObjects element = %v; want canceledErr", err)
+		}
+	}
+
+	if _, err := bucket.PresignGetObject(ctx, "x", time.Minute); !errors.Is(err, canceledErr) {
+		t.Errorf("PresignGetObject = %v; want canceledErr", err)
+	}
+	if _, err := bucket.PresignPutObject(ctx, "x", time.Minute); !errors.Is(err, canceledErr) {
+		t.Errorf("PresignPutObject = %v; want canceledErr", err)
+	}
+	if _, err := bucket.PresignHeadObject(ctx, "x", time.Minute); !errors.Is(err, canceledErr) {
+		t.Errorf("PresignHeadObject = %v; want canceledErr", err)
+	}
+	if _, err := bucket.PresignDeleteObject(ctx, "x", time.Minute); !errors.Is(err, canceledErr) {
+		t.Errorf("PresignDeleteObject = %v; want canceledErr", err)
 	}
 }
 

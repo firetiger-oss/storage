@@ -51,9 +51,16 @@ func (b *readOnlyBucket) loadIndex(ctx context.Context) (map[string]ocispec.Desc
 	if err != nil {
 		return nil, nil, makeBucketError(err)
 	}
-	if desc.MediaType == ocispec.MediaTypeImageIndex {
-		return nil, nil, fmt.Errorf("%s: image-index references must be resolved to a single manifest first: %w",
-			b.reference, errdef.ErrUnsupported)
+	// Be explicit about what we accept. ocispec.Manifest only models
+	// the standard image-manifest layout (config + layers); decoding a
+	// different shape (image index, OCI artifact manifest with `blobs`,
+	// Docker manifest list) silently leaves Layers empty and the
+	// bucket would look like an empty artifact. Reject everything that
+	// isn't an image manifest with errdef.ErrUnsupported so callers
+	// know to pick a single platform manifest first.
+	if desc.MediaType != ocispec.MediaTypeImageManifest {
+		return nil, nil, fmt.Errorf("%s: media type %q is not supported (only %s); resolve to a single platform manifest first: %w",
+			b.reference, desc.MediaType, ocispec.MediaTypeImageManifest, errdef.ErrUnsupported)
 	}
 
 	body, err := b.target.Fetch(ctx, desc)
@@ -91,6 +98,9 @@ func (b *readOnlyBucket) Access(ctx context.Context) error {
 }
 
 func (b *readOnlyBucket) Create(ctx context.Context) error {
+	if err := context.Cause(ctx); err != nil {
+		return err
+	}
 	return storage.ErrBucketReadOnly
 }
 
@@ -157,16 +167,26 @@ func (b *readOnlyBucket) GetObject(ctx context.Context, key string, options ...s
 }
 
 func (b *readOnlyBucket) PutObject(ctx context.Context, key string, value io.Reader, options ...storage.PutOption) (storage.ObjectInfo, error) {
+	if err := context.Cause(ctx); err != nil {
+		return storage.ObjectInfo{}, err
+	}
 	return storage.ObjectInfo{}, storage.ErrBucketReadOnly
 }
 
 func (b *readOnlyBucket) DeleteObject(ctx context.Context, key string) error {
+	if err := context.Cause(ctx); err != nil {
+		return err
+	}
 	return storage.ErrBucketReadOnly
 }
 
 func (b *readOnlyBucket) DeleteObjects(ctx context.Context, objects iter.Seq2[string, error]) iter.Seq2[string, error] {
 	return func(yield func(string, error) bool) {
 		for key, err := range objects {
+			if cancelErr := context.Cause(ctx); cancelErr != nil {
+				yield(key, cancelErr)
+				return
+			}
 			if err != nil {
 				if !yield(key, err) {
 					return
@@ -181,6 +201,9 @@ func (b *readOnlyBucket) DeleteObjects(ctx context.Context, objects iter.Seq2[st
 }
 
 func (b *readOnlyBucket) CopyObject(ctx context.Context, from, to string, options ...storage.PutOption) error {
+	if err := context.Cause(ctx); err != nil {
+		return err
+	}
 	return storage.ErrBucketReadOnly
 }
 
@@ -214,18 +237,30 @@ func (b *readOnlyBucket) WatchObjects(ctx context.Context, options ...storage.Li
 }
 
 func (b *readOnlyBucket) PresignGetObject(ctx context.Context, key string, expiration time.Duration, options ...storage.GetOption) (string, error) {
+	if err := context.Cause(ctx); err != nil {
+		return "", err
+	}
 	return "", storage.ErrPresignNotSupported
 }
 
 func (b *readOnlyBucket) PresignPutObject(ctx context.Context, key string, expiration time.Duration, options ...storage.PutOption) (string, error) {
+	if err := context.Cause(ctx); err != nil {
+		return "", err
+	}
 	return "", storage.ErrPresignNotSupported
 }
 
 func (b *readOnlyBucket) PresignHeadObject(ctx context.Context, key string, expiration time.Duration) (string, error) {
+	if err := context.Cause(ctx); err != nil {
+		return "", err
+	}
 	return "", storage.ErrPresignNotSupported
 }
 
 func (b *readOnlyBucket) PresignDeleteObject(ctx context.Context, key string, expiration time.Duration) (string, error) {
+	if err := context.Cause(ctx); err != nil {
+		return "", err
+	}
 	return "", storage.ErrPresignNotSupported
 }
 
