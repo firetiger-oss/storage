@@ -95,13 +95,22 @@ func (c *LRU[K, V]) GetCloneKey(k K, clone func(K) K, fetch func() (int64, V, er
 // returning. If an inflight fetch for k already exists, the existing Promise
 // is returned; otherwise the calling goroutine executes fetch inline. clone
 // is invoked once on a fresh fetch to produce the key stored in the inflight
-// map and in the underlying LRU.
+// map and in the underlying LRU; because clone is user-supplied and may
+// panic, it is called with the lock released so a panic does not wedge the
+// cache. The inflight map is re-checked after cloning in case another
+// goroutine raced us.
 func (c *LRU[K, V]) fetchLocked(k K, clone func(K) K, fetch func() (int64, V, error)) *Promise[V] {
 	if p := c.inflight[k]; p != nil {
 		c.mutex.Unlock()
 		return p
 	}
+	c.mutex.Unlock()
 	stored := clone(k)
+	c.mutex.Lock()
+	if p := c.inflight[stored]; p != nil {
+		c.mutex.Unlock()
+		return p
+	}
 	readyCh := make(chan struct{})
 	p := &Promise[V]{ready: readyCh}
 	if c.inflight == nil {

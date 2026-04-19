@@ -625,6 +625,79 @@ func TestTTLLoadCloneKey(t *testing.T) {
 	}
 }
 
+func TestLRULoadCloneKeyPanicInCloneReleasesLock(t *testing.T) {
+	lru := &LRU[string, string]{Limit: 100}
+
+	func() {
+		defer func() {
+			if r := recover(); r != "boom" {
+				t.Errorf("recovered=%v want boom", r)
+			}
+		}()
+		lru.LoadCloneKey("k", func(string) string { panic("boom") }, func() (int64, string, error) {
+			t.Error("fetch should not run when clone panics")
+			return 0, "", nil
+		})
+		t.Error("LoadCloneKey should have panicked")
+	}()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		v, err := lru.Load("k", func() (int64, string, error) {
+			return 10, "after", nil
+		})
+		if err != nil {
+			t.Errorf("err=%v", err)
+		}
+		if v != "after" {
+			t.Errorf("v=%q want after", v)
+		}
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("second Load deadlocked — panic in clone did not release the lock")
+	}
+}
+
+func TestTTLLoadCloneKeyPanicInCloneReleasesLock(t *testing.T) {
+	ttl := &TTL[string, string]{Limit: 100}
+	now := time.Now()
+
+	func() {
+		defer func() {
+			if r := recover(); r != "boom" {
+				t.Errorf("recovered=%v want boom", r)
+			}
+		}()
+		ttl.LoadCloneKey("k", now, func(string) string { panic("boom") }, func() (int64, string, time.Time, error) {
+			t.Error("fetch should not run when clone panics")
+			return 0, "", time.Time{}, nil
+		})
+		t.Error("LoadCloneKey should have panicked")
+	}()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		v, _, err := ttl.Load("k", now, func() (int64, string, time.Time, error) {
+			return 10, "after", now.Add(time.Hour), nil
+		})
+		if err != nil {
+			t.Errorf("err=%v", err)
+		}
+		if v != "after" {
+			t.Errorf("v=%q want after", v)
+		}
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("second Load deadlocked — panic in clone did not release the lock")
+	}
+}
+
 func TestLRUZeroLimit(t *testing.T) {
 	lru := &LRU[string, string]{Limit: 0}
 

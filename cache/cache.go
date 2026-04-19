@@ -51,9 +51,24 @@ func (c *Cache[K, V]) LoadCloneKey(key K, clone func(K) K, load func() (V, error
 
 // fetchLocked is called with c.mutex held for writing, after the caller has
 // confirmed that neither c.state nor c.inflight currently has an entry for
-// key. The lock is released before returning.
+// key. The lock is released before returning. clone is user-supplied code
+// that may panic, so it is invoked with the lock released to avoid leaking
+// the mutex in that case; the state and inflight maps are re-checked after
+// cloning in case another goroutine raced us.
 func (c *Cache[K, V]) fetchLocked(key K, clone func(K) K, load func() (V, error)) *Promise[V] {
+	c.mutex.Unlock()
 	stored := clone(key)
+	c.mutex.Lock()
+
+	if value, ok := c.state[stored]; ok {
+		c.mutex.Unlock()
+		return &Promise[V]{ready: ready, value: value}
+	}
+	if p := c.inflight[stored]; p != nil {
+		c.mutex.Unlock()
+		return p
+	}
+
 	readyCh := make(chan struct{})
 	p := &Promise[V]{ready: readyCh}
 	if c.inflight == nil {

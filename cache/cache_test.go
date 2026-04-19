@@ -220,6 +220,42 @@ func TestCachePanicPropagatesAndClearsInflight(t *testing.T) {
 	}
 }
 
+func TestCacheLoadCloneKeyPanicInCloneReleasesLock(t *testing.T) {
+	c := cache.New[string, string](10)
+
+	func() {
+		defer func() {
+			if r := recover(); r != "boom" {
+				t.Errorf("recovered=%v want boom", r)
+			}
+		}()
+		c.LoadCloneKey("k", func(string) string { panic("boom") }, func() (string, error) {
+			t.Error("load should not run when clone panics")
+			return "", nil
+		})
+		t.Error("LoadCloneKey should have panicked")
+	}()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		v, err := c.LoadCloneKey("k", passthroughString, func() (string, error) {
+			return "after", nil
+		})
+		if err != nil {
+			t.Errorf("err=%v", err)
+		}
+		if v != "after" {
+			t.Errorf("v=%q want after", v)
+		}
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("second LoadCloneKey deadlocked — panic in clone did not release the lock")
+	}
+}
+
 func TestSeqCacheLoadCloneKey(t *testing.T) {
 	c := cache.Seq[string, string](10)
 	var cloneCount int
