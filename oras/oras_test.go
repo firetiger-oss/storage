@@ -290,6 +290,61 @@ func TestResolveByDigest(t *testing.T) {
 	if got.Size != desc.Size {
 		t.Fatalf("Resolve(digest).Size = %d; want %d", got.Size, desc.Size)
 	}
+	// Regression: digest-addressed resolves used to drop MediaType,
+	// which broke oras.Copy on manifest digests (oras-go dispatches on
+	// MediaType to walk a manifest's config and layers).
+	if got.MediaType != desc.MediaType {
+		t.Fatalf("Resolve(digest).MediaType = %q; want %q", got.MediaType, desc.MediaType)
+	}
+}
+
+// Regression: oras.Copy from a digest reference must work end-to-end.
+// Prior to the fix, resolveDigest returned an empty MediaType, so
+// oras-go treated the manifest as an opaque blob and skipped the
+// config/layer copies, leaving the destination incomplete.
+func TestCopyByDigestPreservesGraph(t *testing.T) {
+	ctx := t.Context()
+	src := storageoras.New(memory.NewBucket())
+	dst := storageoras.New(memory.NewBucket())
+
+	layer := []byte("layer payload for digest copy")
+	layerDesc := descriptorFor(layer, ocispec.MediaTypeImageLayer)
+	if err := src.Push(ctx, layerDesc, bytes.NewReader(layer)); err != nil {
+		t.Fatalf("push layer: %v", err)
+	}
+
+	configBody := []byte(`{"architecture":"amd64","os":"linux","rootfs":{"type":"layers","diff_ids":[]}}`)
+	configDesc := descriptorFor(configBody, ocispec.MediaTypeImageConfig)
+	if err := src.Push(ctx, configDesc, bytes.NewReader(configBody)); err != nil {
+		t.Fatalf("push config: %v", err)
+	}
+
+	manifest := ocispec.Manifest{
+		MediaType: ocispec.MediaTypeImageManifest,
+		Config:    configDesc,
+		Layers:    []ocispec.Descriptor{layerDesc},
+	}
+	manifest.SchemaVersion = 2
+	manifestBody := mustMarshalJSON(t, manifest)
+	manifestDesc := descriptorFor(manifestBody, ocispec.MediaTypeImageManifest)
+	if err := src.Push(ctx, manifestDesc, bytes.NewReader(manifestBody)); err != nil {
+		t.Fatalf("push manifest: %v", err)
+	}
+
+	// Copy by digest reference, NOT by tag — this is the path that
+	// breaks if resolveDigest drops MediaType.
+	digestRef := manifestDesc.Digest.String()
+	if _, err := oras.Copy(ctx, src, digestRef, dst, digestRef, oras.DefaultCopyOptions); err != nil {
+		t.Fatalf("oras.Copy by digest: %v", err)
+	}
+
+	// Both the config and the layer must have made the trip.
+	if ok, err := dst.Exists(ctx, configDesc); err != nil || !ok {
+		t.Fatalf("config not copied: exists=%v err=%v", ok, err)
+	}
+	if ok, err := dst.Exists(ctx, layerDesc); err != nil || !ok {
+		t.Fatalf("layer not copied: exists=%v err=%v", ok, err)
+	}
 }
 
 func TestResolveMissingDigestReturnsNotFound(t *testing.T) {

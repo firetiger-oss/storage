@@ -181,7 +181,15 @@ func (s *store) resolveDigest(ctx context.Context, d digest.Digest) (ocispec.Des
 	if err != nil {
 		return ocispec.Descriptor{}, makeError(err)
 	}
-	return ocispec.Descriptor{Digest: d, Size: info.Size}, nil
+	// ContentType was stored on Push from desc.MediaType; recover it
+	// here so digest-addressed manifests resolve to a descriptor that
+	// oras-go recognises (oras.Copy, oras.Resolve, etc. dispatch on
+	// MediaType to walk the manifest's config and layers).
+	return ocispec.Descriptor{
+		MediaType: info.ContentType,
+		Digest:    d,
+		Size:      info.Size,
+	}, nil
 }
 
 func (s *store) Tag(ctx context.Context, desc ocispec.Descriptor, reference string) error {
