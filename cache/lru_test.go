@@ -702,6 +702,57 @@ func TestTTLLoadCloneKeyPanicInCloneReleasesLock(t *testing.T) {
 	}
 }
 
+func TestLRULoadCloneKeyDedupesAcrossFetchCompletion(t *testing.T) {
+	lru := &LRU[string, string]{Limit: 100}
+
+	var fetchCount int32
+	cloneStarted := make(chan struct{})
+	releaseClone := make(chan struct{})
+
+	slowCloneUsed := false
+	slowClone := func(k string) string {
+		if !slowCloneUsed {
+			slowCloneUsed = true
+			close(cloneStarted)
+			<-releaseClone
+		}
+		return k
+	}
+
+	bDone := make(chan struct{})
+	go func() {
+		defer close(bDone)
+		_, err := lru.LoadCloneKey("k", slowClone, func() (int64, string, error) {
+			atomic.AddInt32(&fetchCount, 1)
+			return 10, "v", nil
+		})
+		if err != nil {
+			t.Errorf("b LoadCloneKey: %v", err)
+		}
+	}()
+
+	<-cloneStarted
+	// B is parked inside slowClone. Run a full Load that fetches, inserts
+	// into the cache, and removes the inflight entry before B's install.
+	v, err := lru.Load("k", func() (int64, string, error) {
+		atomic.AddInt32(&fetchCount, 1)
+		return 10, "v", nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v != "v" {
+		t.Fatalf("v=%q want v", v)
+	}
+
+	close(releaseClone)
+	<-bDone
+
+	if got := atomic.LoadInt32(&fetchCount); got != 1 {
+		t.Errorf("fetch ran %d times, want 1 (install must re-check cache before refetching)", got)
+	}
+}
+
 func TestTTLReloadCloneKeyJoinsInflightWithoutCloning(t *testing.T) {
 	ttl := &TTL[string, string]{Limit: 100}
 	now := time.Now()
@@ -746,6 +797,111 @@ func TestTTLReloadCloneKeyJoinsInflightWithoutCloning(t *testing.T) {
 
 	if got := atomic.LoadInt32(&cloneCount); got != 0 {
 		t.Errorf("clone ran %d times while joining inflight, want 0", got)
+	}
+}
+
+func TestLRUInstallPromotesCacheHitFromRace(t *testing.T) {
+	lru := &LRU[string, string]{Limit: 60}
+
+	// Prime with a, b, c. Queue state: [c, b, a] with a at the LRU end.
+	for _, k := range []string{"a", "b", "c"} {
+		_, err := lru.Load(k, func() (int64, string, error) {
+			return 20, "v-" + k, nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Simulate the race: the caller's lookup() missed (as if cache had
+	// not yet been filled for "a"), then during clone another goroutine
+	// inserted the value. install("a") must return the cache hit and
+	// also promote "a" to MRU so the next eviction targets "b", not "a".
+	p, readyCh := lru.install("a")
+	if readyCh != nil {
+		t.Fatalf("expected cache hit, got fresh install (readyCh != nil)")
+	}
+	v, err := p.Wait()
+	if err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+	if v != "v-a" {
+		t.Errorf("v=%q want v-a", v)
+	}
+
+	// Insert "d" — exceeds the limit, triggering one eviction.
+	_, err = lru.Load("d", func() (int64, string, error) {
+		return 20, "v-d", nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// With promotion, "a" survives and "b" is evicted (it is now LRU).
+	if _, found := lru.cache.Peek("a"); !found {
+		t.Error("a should have been promoted by install and survived eviction")
+	}
+	if _, found := lru.cache.Peek("b"); found {
+		t.Error("b should have been evicted (LRU after a's promotion)")
+	}
+}
+
+func TestTTLLoadRefetchesExpiredEntry(t *testing.T) {
+	ttl := &TTL[string, string]{Limit: 100}
+	now := time.Now()
+
+	v, _, err := ttl.Load("k", now, func() (int64, string, time.Time, error) {
+		return 10, "v1", now.Add(time.Second), nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v != "v1" {
+		t.Fatalf("v=%q want v1", v)
+	}
+
+	later := now.Add(2 * time.Second) // past expire
+	fetchRan := false
+	v, _, err = ttl.Load("k", later, func() (int64, string, time.Time, error) {
+		fetchRan = true
+		return 10, "v2", later.Add(time.Second), nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !fetchRan {
+		t.Error("fetch did not run on expired entry")
+	}
+	if v != "v2" {
+		t.Errorf("v=%q want v2 (expired entry must trigger refetch)", v)
+	}
+}
+
+func TestTTLReloadAlwaysRefetchesFreshEntry(t *testing.T) {
+	ttl := &TTL[string, string]{Limit: 100}
+	now := time.Now()
+	expire := now.Add(time.Hour)
+
+	_, _, err := ttl.Load("k", now, func() (int64, string, time.Time, error) {
+		return 10, "v1", expire, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fetchRan := false
+	v, _, err := ttl.Reload("k", now, func() (int64, string, time.Time, error) {
+		fetchRan = true
+		return 10, "v2", expire, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !fetchRan {
+		t.Error("fetch did not run; Reload must force a refresh even when cache is fresh")
+	}
+	if v != "v2" {
+		t.Errorf("v=%q want v2", v)
 	}
 }
 

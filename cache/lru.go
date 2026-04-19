@@ -134,12 +134,20 @@ func (c *LRU[K, V]) lookup(k K) *Promise[V] {
 }
 
 // install installs a new inflight entry for stored. If another goroutine
-// already has one (possibly installed while the caller was cloning), the
-// existing promise is returned and readyCh is nil. Otherwise the returned
-// readyCh is non-nil and the caller must complete the fetch via runFetch.
+// completed a fetch for the same key during clone, a promise resolved
+// from the cache entry is returned; if an inflight fetch is currently
+// running, the existing promise is returned. In both cases readyCh is
+// nil. Otherwise the returned readyCh is non-nil and the caller must
+// complete the fetch via runFetch.
 func (c *LRU[K, V]) install(stored K) (*Promise[V], chan struct{}) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
+	if _, ok := c.cache.Peek(stored); ok {
+		// Race-path hit: another goroutine completed a fetch for stored
+		// during clone. Lookup promotes it to MRU and counts the hit.
+		v, _ := c.cache.Lookup(stored)
+		return &Promise[V]{ready: ready, value: v}, nil
+	}
 	if p := c.inflight[stored]; p != nil {
 		return p, nil
 	}
