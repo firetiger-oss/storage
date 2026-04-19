@@ -146,6 +146,9 @@ func (c *Client) PutObject(ctx context.Context, params *s3.PutObjectInput, optFn
 		copy(sum[:], raw)
 		options = append(options, storage.ChecksumSHA256(sum))
 	}
+	if params.ContentLength != nil {
+		options = append(options, storage.ContentLength(aws.ToInt64(params.ContentLength)))
+	}
 
 	object, err := c.Bucket.PutObject(ctx, aws.ToString(params.Key), params.Body, options...)
 	if err != nil {

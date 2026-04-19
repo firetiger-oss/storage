@@ -229,6 +229,16 @@ func (b *Bucket) PutObject(ctx context.Context, key string, value io.Reader, opt
 		value = verifier
 	}
 
+	// Same trick for the declared ContentLength: gsclient computes the
+	// multipart envelope size up front, so a body that's shorter than
+	// declared would otherwise produce a confusing transport error.
+	// Surface a deterministic error instead and skip the upload.
+	var lenVerifier *contentLengthReader
+	if valueContentLength >= 0 {
+		lenVerifier = &contentLengthReader{r: value, want: valueContentLength}
+		value = lenVerifier
+	}
+
 	var object storage.ObjectInfo
 	if valueContentLength < 0 {
 		object, err = b.putClient.PutObjectStreaming(ctx, key, value, putOptions)
@@ -241,10 +251,34 @@ func (b *Bucket) PutObject(ctx context.Context, key string, value io.Reader, opt
 	if verifier != nil && verifier.mismatched {
 		return storage.ObjectInfo{}, fmt.Errorf("%s: %w", key, storage.ErrChecksumMismatch)
 	}
+	if lenVerifier != nil && lenVerifier.mismatched {
+		return storage.ObjectInfo{}, fmt.Errorf("%s: declared content length %d does not match streamed body of %d bytes",
+			key, lenVerifier.want, lenVerifier.n)
+	}
 	if err != nil {
 		return storage.ObjectInfo{}, makeIcebergError(err)
 	}
 	return object, nil
+}
+
+// contentLengthReader fails the final Read when the streamed body is
+// shorter than the declared length, so the upload library aborts before
+// committing.
+type contentLengthReader struct {
+	r          io.Reader
+	want       int64
+	n          int64
+	mismatched bool
+}
+
+func (c *contentLengthReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.n += int64(n)
+	if err == io.EOF && c.n != c.want {
+		c.mismatched = true
+		return n, fmt.Errorf("declared content length %d does not match streamed body of %d bytes", c.want, c.n)
+	}
+	return n, err
 }
 
 // sha256VerifyReader hashes the bytes flowing through it and replaces

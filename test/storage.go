@@ -372,6 +372,11 @@ func TestStorage(t *testing.T, loadBucket func(*testing.T) (storage.Bucket, erro
 			scenario: "PutObject without a checksum option behaves as before",
 			function: testStoragePutObjectChecksumSHA256NoOption,
 		},
+
+		{
+			scenario: "PutObject with mismatched ContentLength is rejected and does not store the body",
+			function: testStoragePutObjectContentLengthMismatch,
+		},
 	}
 
 	for _, adapter := range adapters {
@@ -884,6 +889,23 @@ func testStoragePutObjectChecksumSHA256Mismatch(t *testing.T, bucket storage.Buc
 
 	if _, err := bucket.HeadObject(ctx, key); err == nil {
 		t.Fatal("object stored despite checksum mismatch")
+	} else if !errors.Is(err, storage.ErrObjectNotFound) {
+		t.Fatalf("HeadObject after mismatch: got %v; want ErrObjectNotFound", err)
+	}
+}
+
+func testStoragePutObjectContentLengthMismatch(t *testing.T, bucket storage.Bucket) {
+	ctx := t.Context()
+	key := "test-object-content-length-mismatch"
+	data := []byte("twelve bytes")
+
+	_, err := bucket.PutObject(ctx, key, bytes.NewReader(data), storage.ContentLength(999))
+	if err == nil {
+		t.Fatal("PutObject: expected error from declared ContentLength != streamed body length")
+	}
+
+	if _, err := bucket.HeadObject(ctx, key); err == nil {
+		t.Fatal("object stored despite content length mismatch")
 	} else if !errors.Is(err, storage.ErrObjectNotFound) {
 		t.Fatalf("HeadObject after mismatch: got %v; want ErrObjectNotFound", err)
 	}
