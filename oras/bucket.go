@@ -157,10 +157,10 @@ func (b *readOnlyBucket) GetObject(ctx context.Context, key string, options ...s
 			body.Close()
 			return nil, storage.ObjectInfo{}, err
 		}
-		body = readerCloser{
-			Reader: io.LimitReader(body, take),
-			Closer: body,
-		}
+		body = struct {
+			io.Reader
+			io.Closer
+		}{io.LimitReader(body, take), body}
 	}
 
 	return body, objectInfoFromDescriptor(desc), nil
@@ -346,10 +346,3 @@ func makeBucketError(err error) error {
 	return errors.Join(sentinel, err)
 }
 
-// readerCloser bundles an io.Reader with an unrelated io.Closer
-// (used to keep the underlying body Close hookable through a
-// LimitReader-wrapped stream).
-type readerCloser struct {
-	io.Reader
-	io.Closer
-}
