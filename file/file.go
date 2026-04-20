@@ -206,9 +206,11 @@ func (b *Bucket) GetObject(ctx context.Context, key string, options ...storage.G
 			end = object.Size - 1
 		}
 		if start >= object.Size {
-			f.Close()
+			if err := seekToEnd(f); err != nil {
+				return nil, storage.ObjectInfo{}, err
+			}
 			closeFile = false
-			return io.NopCloser(strings.NewReader("")), object, nil
+			return f, object, nil
 		}
 		if _, err := f.Seek(start, io.SeekCurrent); err != nil {
 			return nil, storage.ObjectInfo{}, err
