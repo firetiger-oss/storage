@@ -297,11 +297,16 @@ objectCache:
 			return 0, object, time.Time{}, err
 		}
 		defer reader.Close()
-		object.info = info
-		object.body = make([]byte, info.Size)
-		if _, err := io.ReadFull(reader, object.body); err != nil {
+		// Read the whole body rather than pre-allocating info.Size
+		// bytes — some backends (notably gs when serving
+		// gzip-transcoded objects) return an info.Size that
+		// understates the reader's actual byte length.
+		body, err := io.ReadAll(reader)
+		if err != nil {
 			return 0, object, time.Time{}, err
 		}
+		object.info = info
+		object.body = body
 		size := int64(0)
 		size += int64(len(key))
 		size += int64(len(object.body))

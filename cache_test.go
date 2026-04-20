@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -69,6 +70,50 @@ type countingGetBucket struct {
 func (b *countingGetBucket) GetObject(ctx context.Context, key string, options ...storage.GetOption) (io.ReadCloser, storage.ObjectInfo, error) {
 	b.gets++
 	return b.Bucket.GetObject(ctx, key, options...)
+}
+
+// TestCacheObjectCacheHandlesSizeLyingBackend exercises the case where
+// the backend's ObjectInfo.Size understates the reader's actual byte
+// length (the gs gzip-transcoding case). The full-object cache path
+// must capture the real body length, not truncate to info.Size.
+func TestCacheObjectCacheHandlesSizeLyingBackend(t *testing.T) {
+	fullBody := strings.Repeat("decompressed ", 200) // ~2600 bytes
+	backend := &sizeLyingObjectBucket{
+		info: storage.ObjectInfo{
+			Size: 60, // pretend stored (compressed) size
+		},
+		body: fullBody,
+	}
+	bucket := storage.NewCache().AdaptBucket(backend)
+
+	r, _, err := bucket.GetObject(t.Context(), "k")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Close()
+	if len(got) != len(fullBody) {
+		t.Fatalf("body length = %d, want %d (object cache allocated info.Size and truncated?)", len(got), len(fullBody))
+	}
+}
+
+type sizeLyingObjectBucket struct {
+	storage.Bucket
+	info storage.ObjectInfo
+	body string
+}
+
+func (b *sizeLyingObjectBucket) Location() string { return "mock://lies-obj" }
+
+func (b *sizeLyingObjectBucket) HeadObject(ctx context.Context, key string) (storage.ObjectInfo, error) {
+	return b.info, nil
+}
+
+func (b *sizeLyingObjectBucket) GetObject(ctx context.Context, key string, options ...storage.GetOption) (io.ReadCloser, storage.ObjectInfo, error) {
+	return io.NopCloser(strings.NewReader(b.body)), b.info, nil
 }
 
 // TestCacheDivisionByZero tests the division by zero bug when pageSize is set to 0
