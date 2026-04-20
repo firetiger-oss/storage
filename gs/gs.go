@@ -559,16 +559,18 @@ func (b *Bucket) PresignGetObject(ctx context.Context, key string, expiration ti
 }
 
 // signedGetOptions builds the gcloud.SignedURLOptions for a GET
-// presigned URL. It commits the client to sending Accept-Encoding:
-// gzip so GCS returns gzip-encoded objects as-stored rather than
-// decompressing them on the fly — matching the ReadCompressed(true)
-// behaviour of the direct GetObject path.
+// presigned URL. Signing Accept-Encoding to opt out of GCS
+// transcoding isn't safe: browsers, curl, and proxies don't all send
+// that header value verbatim, so the resulting URL would fail
+// signature verification for ordinary consumers. That means presigned
+// GETs on gzip-encoded objects still go through GCS's default
+// decompressive transcoding — this PR scopes its transcoding opt-out
+// to the direct GetObject path.
 func signedGetOptions(key string, expiration time.Duration, options ...storage.GetOption) (*gcloud.SignedURLOptions, error) {
 	opts := &gcloud.SignedURLOptions{
 		Scheme:  gcloud.SigningSchemeV4,
 		Method:  "GET",
 		Expires: time.Now().Add(expiration),
-		Headers: []string{"Accept-Encoding:gzip"},
 	}
 	getOptions := storage.NewGetOptions(options...)
 	if start, end, ok := getOptions.BytesRange(); ok {

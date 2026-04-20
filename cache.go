@@ -185,12 +185,13 @@ func (c *cachedBucket) GetObject(ctx context.Context, key string, options ...Get
 			return nil, ObjectInfo{}, err
 		}
 		// The page cache needs both endpoints to compute page indices,
-		// so it can't serve open-ended ranges. Fall through to the
-		// object cache path (below), which can slice a cached body by
-		// any range. This also lets repeated tail reads share a single
-		// full-object fetch.
+		// so it can't serve open-ended ranges. Falling through to the
+		// object cache would download the entire object on a miss,
+		// which is a heavy cost just to serve a small tail — delegate
+		// to the underlying bucket, which typically supports native
+		// tail reads cheaply.
 		if getOptions.end < 0 {
-			goto objectCache
+			return c.bucket.GetObject(ctx, key, options...)
 		}
 
 		ctx, cancel := context.WithCancel(ctx)
@@ -289,7 +290,6 @@ func (c *cachedBucket) GetObject(ctx context.Context, key string, options ...Get
 		}
 	}
 
-objectCache:
 	object, _, err = c.objects.Load(key, time.Now(), func() (int64, cachedObject, time.Time, error) {
 		var object cachedObject
 		reader, info, err := c.bucket.GetObject(ctx, key)

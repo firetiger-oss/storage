@@ -9,42 +9,34 @@ import (
 	"github.com/firetiger-oss/storage"
 )
 
-// TestSignedGetOptionsIncludesAcceptEncodingGzip ensures the signed GET
-// options commit the client to sending Accept-Encoding: gzip so GCS
-// returns gzip-encoded objects as-stored rather than decompressing
-// them on the fly. Without this header in the signature, a presigned
-// URL hit directly or through http.BucketHandler's presign-redirect
-// path would trigger transcoding again, contradicting the
-// ReadCompressed(true) behaviour of the direct GetObject path.
-func TestSignedGetOptionsIncludesAcceptEncodingGzip(t *testing.T) {
+// TestSignedGetOptionsDoesNotSignAcceptEncoding ensures the signed GET
+// options do NOT commit the client to sending Accept-Encoding: gzip —
+// that would break browsers, curl, and proxies that don't send the
+// header or send a different value (signature verification fails on
+// header mismatch). Presigned GETs therefore go through GCS's default
+// decompressive transcoding for gzip-stored objects; opting out is
+// only available on the direct GetObject path.
+func TestSignedGetOptionsDoesNotSignAcceptEncoding(t *testing.T) {
 	opts, err := signedGetOptions("key", time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !hasHeader(opts.Headers, "Accept-Encoding:gzip") {
-		t.Errorf("opts.Headers = %v; want to include Accept-Encoding:gzip", opts.Headers)
+	for _, h := range opts.Headers {
+		if strings.HasPrefix(strings.ToLower(h), "accept-encoding:") {
+			t.Errorf("opts.Headers includes %q; presigned URLs must not require Accept-Encoding", h)
+		}
 	}
 }
 
-// TestSignedGetOptionsIncludesRangeAndAcceptEncoding makes sure the
-// Range and Accept-Encoding headers are both signed when a BytesRange
-// option is supplied, so presigned tail reads work without triggering
-// transcoding.
-func TestSignedGetOptionsIncludesRangeAndAcceptEncoding(t *testing.T) {
+// TestSignedGetOptionsIncludesRange makes sure the Range header is
+// signed when a BytesRange option is supplied, so presigned ranged
+// GETs work as expected.
+func TestSignedGetOptionsIncludesRange(t *testing.T) {
 	opts, err := signedGetOptions("key", time.Hour, storage.BytesRange(100, -1))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !hasHeader(opts.Headers, "Accept-Encoding:gzip") {
-		t.Errorf("opts.Headers = %v; want to include Accept-Encoding:gzip", opts.Headers)
-	}
-	if !hasHeader(opts.Headers, "Range:bytes=100-") {
+	if !slices.ContainsFunc(opts.Headers, func(h string) bool { return strings.EqualFold(h, "Range:bytes=100-") }) {
 		t.Errorf("opts.Headers = %v; want to include Range:bytes=100-", opts.Headers)
 	}
-}
-
-func hasHeader(headers []string, want string) bool {
-	return slices.ContainsFunc(headers, func(h string) bool {
-		return strings.EqualFold(h, want)
-	})
 }
