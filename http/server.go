@@ -371,20 +371,18 @@ func handleGET(w http.ResponseWriter, r *http.Request, b storage.Bucket, h *Hand
 			}
 			header := w.Header()
 			setObject(header, object)
-			// For a ranged 206 we cannot trust ObjectInfo.Size as an
-			// upper bound on what's about to be streamed (the gs
-			// backend serves transcoded bytes whose length doesn't
-			// match the stored size). Drop the Content-Length that
-			// setObject installed and let Go's http server send
-			// Transfer-Encoding: chunked so the body streams to EOF
-			// at its actual length. Content-Range is still emitted
-			// (using the best information we have from object.Size)
-			// so clients can recover the total-size field it carries
-			// even if the first-/last-byte endpoints are imprecise
-			// for transcoded bodies.
-			header.Del("Content-Length")
+			// setObject set Content-Length to object.Size; replace it
+			// with the range's slice length so clients and proxies get
+			// a well-formed 206.
+			setContentLength(header, httpRange.ContentLength(object.Size))
 			setContentRange(header, httpRange.ContentRange(object.Size))
 			w.WriteHeader(http.StatusPartialContent)
+			// Known limitation: for backends whose streamed body
+			// length exceeds ObjectInfo.Size (gs gzip-transcoded
+			// objects), this response will be truncated to
+			// Size-start bytes. That matches the pre-existing
+			// behaviour for closed ranges in the same scenario and
+			// preserves RFC-compliant headers for the common case.
 			io.Copy(w, buf)
 			return
 		}
