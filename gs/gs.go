@@ -184,48 +184,43 @@ func (b *Bucket) GetObject(ctx context.Context, key string, options ...storage.G
 		Metadata:        attrs.Metadata,
 	}
 
-	// Objects stored with Content-Encoding: gzip are served decompressed
-	// by GCS unless the client opts into compressed transfer. In that
-	// case attrs.Size is the stored (compressed) size while the caller's
-	// BytesRange offsets are in decompressed-byte space, so the two are
-	// not directly comparable: the past-end short-circuit and the
-	// clamping of end to attrs.Size-1 both become unsafe.
-	// See https://cloud.google.com/storage/docs/transcoding
-	transcoded := attrs.ContentEncoding == "gzip"
-
 	var reader *gcloud.Reader
 	if hasRange {
 		if err := storage.ValidObjectRange(key, start, end); err != nil {
 			return nil, storage.ObjectInfo{}, err
 		}
-		if !transcoded && start >= attrs.Size {
-			return io.NopCloser(strings.NewReader("")), object, nil
-		}
 		length := int64(-1)
 		if end >= 0 {
-			clampedEnd := end
-			if !transcoded {
-				clampedEnd = min(end, attrs.Size-1)
-			}
-			length = (clampedEnd + 1) - start
+			length = (end + 1) - start
 		}
 		reader, err = obj.NewRangeReader(ctx, start, length)
+		if err != nil {
+			// GCS returns 416 Range Not Satisfiable when the start
+			// offset is past the end of the stored object. Translate
+			// to an empty reader so the BytesRange(offset, -1)
+			// contract (empty body + nil error past end) holds for
+			// gs the same as it does for s3/http.
+			if isRangeNotSatisfiable(err) {
+				return io.NopCloser(strings.NewReader("")), object, nil
+			}
+			return nil, storage.ObjectInfo{}, makeIcebergError(err)
+		}
 	} else {
 		reader, err = obj.NewReader(ctx)
-	}
-	if err != nil {
-		return nil, storage.ObjectInfo{}, makeIcebergError(err)
+		if err != nil {
+			return nil, storage.ObjectInfo{}, makeIcebergError(err)
+		}
 	}
 
 	// https://cloud.google.com/storage/docs/transcoding
+	// When GCS transcodes a gzip-stored object on the fly, the gcloud
+	// client gets the whole decompressed body regardless of the Range
+	// header and exposes it via reader.Attrs.Decompressed. Seek into
+	// that stream by discarding `start` bytes — past-end reads surface
+	// as EOF and are flattened to an empty reader.
 	if hasRange && reader.Attrs.Decompressed {
 		if _, err := io.CopyN(io.Discard, reader, start); err != nil {
 			reader.Close()
-			// CopyN returns io.EOF / io.ErrUnexpectedEOF when the
-			// decompressed stream is shorter than the caller's start
-			// offset — i.e. a tail read past the end of the object.
-			// Treat it the same as the non-transcoded past-end case:
-			// empty reader + nil error.
 			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 				return io.NopCloser(strings.NewReader("")), object, nil
 			}
@@ -235,6 +230,11 @@ func (b *Bucket) GetObject(ctx context.Context, key string, options ...storage.G
 
 	object.ContentEncoding = reader.Attrs.ContentEncoding
 	return reader, object, nil
+}
+
+func isRangeNotSatisfiable(err error) bool {
+	var gerr *googleapi.Error
+	return errors.As(err, &gerr) && gerr.Code == http.StatusRequestedRangeNotSatisfiable
 }
 
 func (b *Bucket) PutObject(ctx context.Context, key string, value io.Reader, options ...storage.PutOption) (storage.ObjectInfo, error) {

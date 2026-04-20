@@ -27,6 +27,49 @@ func TestGoogleCloudStorageBucket(t *testing.T) {
 	})
 }
 
+// TestGCSTailRangeNoTransformGzip covers the case where an object is
+// stored with Content-Encoding: gzip but also Cache-Control:
+// no-transform, which disables GCS's decompressive transcoding: the
+// body is served as-is and reader.Attrs.Decompressed is false, so
+// attrs.Size matches the wire-length. The bucket must fall back to
+// the normal short-circuit/clamp path instead of treating these as
+// transcoded on the basis of attrs.ContentEncoding alone.
+func TestGCSTailRangeNoTransformGzip(t *testing.T) {
+	server, googleClient, bucketName := newServerAndClient(t)
+	defer server.Stop()
+
+	body := strings.Repeat("x", 100)
+	server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{
+			BucketName:      bucketName,
+			Name:            "gz-notransform",
+			ContentEncoding: "gzip",
+			CacheControl:    "no-transform",
+			ContentType:     "application/octet-stream",
+		},
+		Content: []byte(body),
+	})
+
+	gsClient, err := gsclient.NewGoogleCloudStorageClient(t.Context(), bucketName, gsclient.WithHTTPClient(server.HTTPClient()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bucket := gs.NewBucket(googleClient, gsClient, bucketName)
+
+	r, _, err := bucket.GetObject(t.Context(), "gz-notransform", storage.BytesRange(int64(len(body)), -1))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer r.Close()
+	got, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("unexpected read error: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("expected empty body for start == size, got %d bytes", len(got))
+	}
+}
+
 // TestGCSTailRangePastDecompressedEndTranscoded covers the other edge
 // of transcoded-range handling: an offset past the *decompressed* end
 // of a gzip-transcoded object must still return an empty reader and

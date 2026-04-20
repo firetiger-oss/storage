@@ -453,6 +453,25 @@ func TestHTTPServerStreamsNonEmptyRangeEvenWhenSizeLooksWrong(t *testing.T) {
 	if resp.StatusCode == http.StatusRequestedRangeNotSatisfiable {
 		t.Fatalf("server returned 416 for a range whose backend reader is non-empty; should stream the body instead")
 	}
+	// When the backend's reader length doesn't line up with object.Size
+	// (transcoded gs), the server can't build a correct Content-Range
+	// or Content-Length from object.Size alone — it should omit them
+	// rather than emit something malformed like "bytes 100-59/60".
+	if got := resp.Header.Get("Content-Range"); got != "" {
+		if strings.HasPrefix(got, "bytes ") {
+			remainder := strings.TrimPrefix(got, "bytes ")
+			rangePart, _, _ := strings.Cut(remainder, "/")
+			s, e, ok := strings.Cut(rangePart, "-")
+			if ok {
+				var start, end int64
+				_, errStart := fmt.Sscanf(s, "%d", &start)
+				_, errEnd := fmt.Sscanf(e, "%d", &end)
+				if errStart == nil && errEnd == nil && end < start {
+					t.Errorf("Content-Range = %q has end < start, which is malformed", got)
+				}
+			}
+		}
+	}
 	got, err := io.ReadAll(resp.Body)
 	if err != nil {
 		t.Fatalf("read: %v", err)

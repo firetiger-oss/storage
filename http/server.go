@@ -357,10 +357,8 @@ func handleGET(w http.ResponseWriter, r *http.Request, b storage.Bucket, h *Hand
 			// from object.Size alone: the gs backend serves
 			// gzip-transcoded objects whose on-the-wire length differs
 			// from the stored size it reports in ObjectInfo. Peek at
-			// the body instead — an empty reader means "past end"
-			// regardless of what Size says, and a non-empty reader
-			// means we have data to stream even if the arithmetic on
-			// object.Size said otherwise.
+			// the body — an empty reader means "past end" regardless
+			// of what Size says.
 			buf := bufio.NewReader(reader)
 			if _, err := buf.Peek(1); errors.Is(err, io.EOF) {
 				// Mirror real S3 with 416 + "bytes */size".
@@ -373,8 +371,21 @@ func handleGET(w http.ResponseWriter, r *http.Request, b storage.Bucket, h *Hand
 			}
 			header := w.Header()
 			setObject(header, object)
-			setContentLength(header, httpRange.ContentLength(object.Size))
-			setContentRange(header, httpRange.ContentRange(object.Size))
+			// When the size-based arithmetic agrees with the backend
+			// (the typical case: memory/file/s3/oras, plus
+			// non-transcoded gs), advertise Content-Length and
+			// Content-Range so the client can stream a well-formed
+			// 206. Otherwise (transcoded gs) the reader length
+			// diverges from object.Size — fall back to chunked
+			// transfer rather than emit headers that would be invalid
+			// per RFC 7233 (e.g. "bytes 100-59/60" or negative
+			// Content-Length).
+			if n := httpRange.ContentLength(object.Size); n > 0 {
+				setContentLength(header, n)
+				setContentRange(header, httpRange.ContentRange(object.Size))
+			} else {
+				header.Del("Content-Length")
+			}
 			w.WriteHeader(http.StatusPartialContent)
 			io.Copy(w, buf)
 			return
