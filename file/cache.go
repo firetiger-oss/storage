@@ -432,17 +432,20 @@ func (b *cachedBucket) getObjectFromBucket(ctx context.Context, key, filePath st
 		return b.bucket.GetObject(ctx, key)
 	}
 
+	// info.Size can be smaller than the bytes we just wrote (the
+	// gs transcoded case: stored compressed length + decompressed
+	// body). Use the on-disk size as the authoritative value for
+	// both clamping and the returned ObjectInfo so callers get a
+	// coherent (body, info) pair.
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, info, err
+	}
+	fileSize := fi.Size()
+	info.Size = fileSize
+
 	body = io.ReadCloser(f)
 	if hasBytesRange {
-		// info.Size can be smaller than the bytes we just wrote (the
-		// gs transcoded case: stored compressed length + decompressed
-		// body). Use the on-disk size as the authoritative clamp to
-		// avoid truncating tail reads.
-		fi, err := f.Stat()
-		if err != nil {
-			return nil, info, err
-		}
-		fileSize := fi.Size()
 		effEnd := end
 		if effEnd < 0 || effEnd >= fileSize {
 			effEnd = fileSize - 1

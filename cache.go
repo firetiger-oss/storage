@@ -305,6 +305,10 @@ objectCache:
 		if err != nil {
 			return 0, object, time.Time{}, err
 		}
+		// Keep info.Size consistent with the cached body so callers
+		// that trust the returned metadata (e.g. http.BucketHandler
+		// computing Content-Length) see a coherent value.
+		info.Size = int64(len(body))
 		object.info = info
 		object.body = body
 		size := int64(0)
