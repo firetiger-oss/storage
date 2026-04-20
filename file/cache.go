@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -329,7 +330,15 @@ func (b *cachedBucket) GetObject(ctx context.Context, key string, options ...sto
 
 	body = io.ReadCloser(cachedFile)
 	if hasBytesRange {
-		body = bytesRangeReadCloser(cachedFile, start, end)
+		effEnd := end
+		if effEnd < 0 {
+			effEnd = cachedInfo.Size - 1
+		}
+		if start >= cachedInfo.Size {
+			body = io.NopCloser(strings.NewReader(""))
+		} else {
+			body = bytesRangeReadCloser(cachedFile, start, effEnd)
+		}
 	}
 	b.lookup(cachedFile.Name())
 	return body, cachedInfo, nil
@@ -364,12 +373,20 @@ func (b *cachedBucket) getObjectFromBucket(ctx context.Context, key, filePath st
 	}
 	if err != nil {
 		if hasBytesRange {
+			effEnd := end
+			if effEnd < 0 {
+				effEnd = info.Size - 1
+			}
 			io.CopyN(io.Discard, body, start)
+			limit := effEnd - start + 1
+			if limit < 0 {
+				limit = 0
+			}
 			body = &struct {
 				io.LimitedReader
 				io.Closer
 			}{
-				LimitedReader: io.LimitedReader{R: body, N: end - start + 1},
+				LimitedReader: io.LimitedReader{R: body, N: limit},
 				Closer:        body,
 			}
 		}
@@ -412,7 +429,15 @@ func (b *cachedBucket) getObjectFromBucket(ctx context.Context, key, filePath st
 
 	body = io.ReadCloser(f)
 	if hasBytesRange {
-		body = bytesRangeReadCloser(f, start, end)
+		effEnd := end
+		if effEnd < 0 {
+			effEnd = info.Size - 1
+		}
+		if start >= info.Size {
+			body = io.NopCloser(strings.NewReader(""))
+		} else {
+			body = bytesRangeReadCloser(f, start, effEnd)
+		}
 	}
 
 	b.lookup(f.Name())

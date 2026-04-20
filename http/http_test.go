@@ -293,7 +293,8 @@ func TestHTTPStorageRateLimiting(t *testing.T) {
 }
 
 // TestHTTPStorageRangeHeaderFormat verifies that the HTTP client correctly formats
-// Range headers for closed ranges (bytes=0-100).
+// Range headers for both closed ranges (bytes=N-M) and open-ended ranges
+// (bytes=N-) used for tail reads.
 func TestHTTPStorageRangeHeaderFormat(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -319,6 +320,18 @@ func TestHTTPStorageRangeHeaderFormat(t *testing.T) {
 			end:           42,
 			expectedRange: "bytes=42-42",
 		},
+		{
+			name:          "open-ended range from start",
+			start:         0,
+			end:           -1,
+			expectedRange: "bytes=0-",
+		},
+		{
+			name:          "open-ended range from offset",
+			start:         5,
+			end:           -1,
+			expectedRange: "bytes=5-",
+		},
 	}
 
 	for _, tc := range tests {
@@ -342,6 +355,67 @@ func TestHTTPStorageRangeHeaderFormat(t *testing.T) {
 				t.Errorf("expected Range header %q, got %q", tc.expectedRange, capturedRange)
 			}
 		})
+	}
+}
+
+// TestHTTPStorageTranslates416 verifies that a 416 Range Not Satisfiable
+// response (returned when the requested start is past the end of the
+// object) is translated into an empty reader with the object size parsed
+// from the Content-Range response header. This removes the need for a
+// preliminary HEAD request by downstream callers doing tail reads.
+func TestHTTPStorageTranslates416(t *testing.T) {
+	const size = int64(100)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", size))
+		w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
+	}))
+	t.Cleanup(server.Close)
+
+	bucket := storagehttp.NewBucket(server.URL)
+	r, info, err := bucket.GetObject(t.Context(), "test-key", storage.BytesRange(size, -1))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer r.Close()
+	if info.Size != size {
+		t.Errorf("ObjectInfo.Size = %d, want %d", info.Size, size)
+	}
+	b, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("unexpected read error: %v", err)
+	}
+	if len(b) != 0 {
+		t.Errorf("expected empty body, got %q", b)
+	}
+}
+
+// TestHTTPServerReturns416ForStartPastEnd verifies that when a client
+// requests a range whose start is past the end of the object, the HTTP
+// server responds with 416 and a "bytes */size" Content-Range header
+// (matching real S3) so the client can translate it into an empty reader.
+func TestHTTPServerReturns416ForStartPastEnd(t *testing.T) {
+	mem := new(memory.Bucket)
+	if _, err := mem.PutObject(t.Context(), "obj", strings.NewReader("abcdefghij")); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(storagehttp.BucketHandler(mem))
+	t.Cleanup(server.Close)
+
+	req, err := http.NewRequest(http.MethodGet, server.URL+"/obj", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Range", "bytes=100-")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusRequestedRangeNotSatisfiable {
+		t.Fatalf("status = %d, want 416", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Content-Range"); got != "bytes */10" {
+		t.Errorf("Content-Range = %q, want %q", got, "bytes */10")
 	}
 }
 

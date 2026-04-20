@@ -184,6 +184,13 @@ func (c *cachedBucket) GetObject(ctx context.Context, key string, options ...Get
 		if err := ValidObjectRange(key, getOptions.start, getOptions.end); err != nil {
 			return nil, ObjectInfo{}, err
 		}
+		// Open-ended ranges (end == -1) can't be page-paginated without
+		// knowing the size, and tail reads are inherently unbounded, so
+		// the page cache wouldn't help. Delegate straight to the
+		// underlying bucket.
+		if getOptions.end < 0 {
+			return c.bucket.GetObject(ctx, key, options...)
+		}
 
 		ctx, cancel := context.WithCancel(ctx)
 		pages := make(chan cachedObject)
@@ -305,7 +312,11 @@ func (c *cachedBucket) GetObject(ctx context.Context, key string, options ...Get
 
 	body := object.body
 	if getOptions.byteRange {
-		body = body[:min(getOptions.end+1, int64(len(body)))]
+		end := getOptions.end
+		if end < 0 {
+			end = int64(len(body)) - 1
+		}
+		body = body[:min(end+1, int64(len(body)))]
 		body = body[min(getOptions.start, int64(len(body))):]
 	}
 	return newCachedObjectBody(body), object.info, nil

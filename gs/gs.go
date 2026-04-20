@@ -174,12 +174,30 @@ func (b *Bucket) GetObject(ctx context.Context, key string, options ...storage.G
 	getOptions := storage.NewGetOptions(options...)
 	start, end, hasRange := getOptions.BytesRange()
 
+	object := storage.ObjectInfo{
+		CacheControl:    attrs.CacheControl,
+		ContentType:     attrs.ContentType,
+		ContentEncoding: attrs.ContentEncoding,
+		ETag:            makeETag(attrs.Generation),
+		Size:            attrs.Size,
+		LastModified:    attrs.Updated,
+		Metadata:        attrs.Metadata,
+	}
+
 	var reader *gcloud.Reader
 	if hasRange {
 		if err := storage.ValidObjectRange(key, start, end); err != nil {
 			return nil, storage.ObjectInfo{}, err
 		}
-		reader, err = obj.NewRangeReader(ctx, start, (end+1)-start)
+		if start >= attrs.Size {
+			return io.NopCloser(strings.NewReader("")), object, nil
+		}
+		length := int64(-1)
+		if end >= 0 {
+			clampedEnd := min(end, attrs.Size-1)
+			length = (clampedEnd + 1) - start
+		}
+		reader, err = obj.NewRangeReader(ctx, start, length)
 	} else {
 		reader, err = obj.NewReader(ctx)
 	}
@@ -195,15 +213,7 @@ func (b *Bucket) GetObject(ctx context.Context, key string, options ...storage.G
 		}
 	}
 
-	object := storage.ObjectInfo{
-		CacheControl:    attrs.CacheControl,
-		ContentType:     attrs.ContentType,
-		ContentEncoding: reader.Attrs.ContentEncoding,
-		ETag:            makeETag(attrs.Generation),
-		Size:            attrs.Size,
-		LastModified:    attrs.Updated,
-		Metadata:        attrs.Metadata,
-	}
+	object.ContentEncoding = reader.Attrs.ContentEncoding
 	return reader, object, nil
 }
 
@@ -531,7 +541,14 @@ func (b *Bucket) PresignGetObject(ctx context.Context, key string, expiration ti
 
 	// Add range header if specified
 	if start, end, ok := getOptions.BytesRange(); ok {
-		opts.Headers = append(opts.Headers, "Range:bytes="+strconv.FormatInt(start, 10)+"-"+strconv.FormatInt(end, 10))
+		if err := storage.ValidObjectRange(key, start, end); err != nil {
+			return "", err
+		}
+		header := "Range:bytes=" + strconv.FormatInt(start, 10) + "-"
+		if end >= 0 {
+			header += strconv.FormatInt(end, 10)
+		}
+		opts.Headers = append(opts.Headers, header)
 	}
 
 	url, err := b.client.Bucket(b.bucket).SignedURL(key, opts)

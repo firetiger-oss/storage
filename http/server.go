@@ -172,22 +172,32 @@ type bytesRange struct {
 
 func (r *bytesRange) ContentLength(size int64) int64 {
 	if r.start < 0 {
+		// Suffix range: bytes=-N. Clamp to available bytes.
+		if -r.start > size {
+			return size
+		}
 		return -r.start
 	}
-	if r.end >= 0 {
-		return (r.end + 1) - r.start
+	effEnd := r.end
+	if effEnd < 0 || effEnd >= size {
+		effEnd = size - 1
 	}
-	return size - r.start
+	return (effEnd + 1) - r.start
 }
 
 func (r *bytesRange) ContentRange(size int64) string {
 	if r.start < 0 {
-		return fmt.Sprintf("bytes %d-%d/%d", size+r.start, size-1, size)
+		suffix := -r.start
+		if suffix > size {
+			suffix = size
+		}
+		return fmt.Sprintf("bytes %d-%d/%d", size-suffix, size-1, size)
 	}
-	if r.end >= 0 {
-		return fmt.Sprintf("bytes %d-%d/%d", r.start, r.end, size)
+	effEnd := r.end
+	if effEnd < 0 || effEnd >= size {
+		effEnd = size - 1
 	}
-	return fmt.Sprintf("bytes %d-%d/%d", r.start, size-1, size)
+	return fmt.Sprintf("bytes %d-%d/%d", r.start, effEnd, size)
 }
 
 func parseBytesRange(rangeHeader string) (*bytesRange, error) {
@@ -340,6 +350,16 @@ func handleGET(w http.ResponseWriter, r *http.Request, b storage.Bucket, h *Hand
 			return
 		}
 		defer reader.Close()
+
+		if httpRange != nil && httpRange.ContentLength(object.Size) <= 0 {
+			// Unsatisfiable range (start past end of object): mirror
+			// real S3 with a 416 + "bytes */size" Content-Range so the
+			// client can translate it back to an empty reader without
+			// a HEAD round-trip.
+			w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", object.Size))
+			Error(w, "InvalidRange", "The requested range is not satisfiable", makeKey(r), http.StatusRequestedRangeNotSatisfiable)
+			return
+		}
 
 		header := w.Header()
 		setObject(header, object)
