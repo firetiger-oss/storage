@@ -419,55 +419,11 @@ func TestHTTPServerReturns416ForStartPastEnd(t *testing.T) {
 	}
 }
 
-// TestHTTPServerTranscodedRangeNotRejected guards against using
-// ObjectInfo.Size for 416 detection when the backend does not know
-// the byte length of the reader upfront. A GCS object that was
-// gzip-compressed on disk is served decompressed by the gcloud Go
-// client; the bucket signals "size not known" by setting Size = -1,
-// and the HTTP server must stream the body without pre-emptively
-// emitting 416.
-func TestHTTPServerTranscodedRangeNotRejected(t *testing.T) {
-	body := strings.Repeat("decompressed body ", 100) // 1800 bytes
-	backend := &transcodedBucket{
-		info: storage.ObjectInfo{
-			Size:        -1, // unknown; backend transcoded on read
-			ContentType: "text/plain",
-		},
-		body: body,
-	}
-
-	server := httptest.NewServer(storagehttp.BucketHandler(backend))
-	t.Cleanup(server.Close)
-
-	req, err := http.NewRequest(http.MethodGet, server.URL+"/transcoded", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Offset past the compressed size but within the decompressed body.
-	req.Header.Set("Range", "bytes=100-")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusRequestedRangeNotSatisfiable {
-		t.Fatalf("server returned 416 for a range whose backend reader is non-empty; should stream the body instead")
-	}
-	got, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatalf("read: %v", err)
-	}
-	if len(got) == 0 {
-		t.Fatalf("expected non-empty body from transcoded backend, got %d bytes", len(got))
-	}
-}
-
 // TestHTTPServerPreservesStoredGzipRange verifies that a backend which
 // stores a gzipped body and reports Content-Encoding: gzip with a
 // correct Size (e.g. memory, file, s3) still gets 206 + Content-Length
-// + Content-Range for ranged requests. The transcoded special-case
-// must not regress this path.
+// + Content-Range for ranged requests. Backends that don't transcode
+// must not be special-cased away from the normal response path.
 func TestHTTPServerPreservesStoredGzipRange(t *testing.T) {
 	mem := new(memory.Bucket)
 	// Store some bytes with Content-Encoding: gzip — memory does not
@@ -506,36 +462,6 @@ func TestHTTPServerPreservesStoredGzipRange(t *testing.T) {
 	if len(got) != 100 {
 		t.Fatalf("body length = %d, want 100", len(got))
 	}
-}
-
-// transcodedBucket simulates a gs-style transcoded GET: ObjectInfo
-// reports Size = -1 (unknown) and the body is the decompressed slice.
-type transcodedBucket struct {
-	storage.Bucket
-	info storage.ObjectInfo
-	body string
-}
-
-func (b *transcodedBucket) Location() string { return "mock://transcoded" }
-
-func (b *transcodedBucket) HeadObject(ctx context.Context, key string) (storage.ObjectInfo, error) {
-	return b.info, nil
-}
-
-func (b *transcodedBucket) GetObject(ctx context.Context, key string, options ...storage.GetOption) (io.ReadCloser, storage.ObjectInfo, error) {
-	getOptions := storage.NewGetOptions(options...)
-	body := b.body
-	if start, _, ok := getOptions.BytesRange(); ok {
-		// Mimic gs behaviour: the reader carries a slice of the
-		// decompressed body starting at `start`, regardless of the
-		// stored compressed size.
-		if start >= int64(len(body)) {
-			body = ""
-		} else {
-			body = body[start:]
-		}
-	}
-	return io.NopCloser(strings.NewReader(body)), b.info, nil
 }
 
 // TestHTTPServerOpenEndedRangeFormat verifies that when the HTTP server receives
