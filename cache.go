@@ -185,12 +185,17 @@ func (c *cachedBucket) GetObject(ctx context.Context, key string, options ...Get
 			return nil, ObjectInfo{}, err
 		}
 		// The page cache needs both endpoints to compute page indices,
-		// so it can't serve open-ended ranges. Falling through to the
-		// object cache would download the entire object on a miss,
-		// which is a heavy cost just to serve a small tail — delegate
-		// to the underlying bucket, which typically supports native
-		// tail reads cheaply.
+		// so it can't serve open-ended ranges. If the full object is
+		// already in the object cache we can slice it — preserves
+		// consistency with prior plain reads and avoids an extra
+		// backend round-trip. Otherwise delegate to the underlying
+		// bucket's native range support rather than downloading the
+		// whole object just to return a tail.
 		if getOptions.end < 0 {
+			if cached, ok := c.objects.Peek(key, time.Now()); ok {
+				object = cached
+				goto sliceCachedObject
+			}
 			return c.bucket.GetObject(ctx, key, options...)
 		}
 
@@ -321,6 +326,7 @@ func (c *cachedBucket) GetObject(ctx context.Context, key string, options ...Get
 		return nil, ObjectInfo{}, err
 	}
 
+sliceCachedObject:
 	body := object.body
 	if getOptions.byteRange {
 		end := getOptions.end
