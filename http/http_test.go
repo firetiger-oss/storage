@@ -463,6 +463,38 @@ func TestHTTPServerServeLocalFileOpenEndedRange(t *testing.T) {
 	}
 }
 
+// TestHTTPServerServeLocalFile416IncludesContentRange verifies the
+// file:// presign-redirect 416 path includes the total size via
+// "bytes */size" so storage/http.Bucket's 416 translation can
+// populate ObjectInfo.Size without a HEAD.
+func TestHTTPServerServeLocalFile416IncludesContentRange(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(dir+"/k", []byte("abcdefghij"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	redirect := &presignFileBucket{Bucket: storagefile.NewBucket(dir), presignPath: dir + "/k"}
+	server := httptest.NewServer(storagehttp.BucketHandler(redirect))
+	t.Cleanup(server.Close)
+
+	req, err := http.NewRequest(http.MethodGet, server.URL+"/k", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Range", "bytes=50-") // past EOF
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusRequestedRangeNotSatisfiable {
+		t.Fatalf("status = %d, want 416", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Content-Range"); got != "bytes */10" {
+		t.Errorf("Content-Range = %q, want %q", got, "bytes */10")
+	}
+}
+
 type presignFileBucket struct {
 	storage.Bucket
 	presignPath string

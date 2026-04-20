@@ -744,6 +744,10 @@ func serveLocalFile(w http.ResponseWriter, r *http.Request, filePath string, htt
 			end = size - 1
 		}
 		if start >= size {
+			// Mirror real S3: include Content-Range so clients (incl.
+			// storage/http.Bucket) can recover the total size from a
+			// past-EOF tail read without an extra HEAD.
+			w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", size))
 			Error(w, "InvalidRange", "The requested range is not satisfiable", filePath, http.StatusRequestedRangeNotSatisfiable)
 			return
 		}
