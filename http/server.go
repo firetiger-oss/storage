@@ -1,6 +1,7 @@
 package http
 
 import (
+	"bufio"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/xml"
@@ -351,25 +352,36 @@ func handleGET(w http.ResponseWriter, r *http.Request, b storage.Bucket, h *Hand
 		}
 		defer reader.Close()
 
-		if httpRange != nil && httpRange.ContentLength(object.Size) <= 0 {
-			// Unsatisfiable range (start past end of object): mirror
-			// real S3 with a 416 + "bytes */size" Content-Range so the
-			// client can translate it back to an empty reader without
-			// a HEAD round-trip.
-			w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", object.Size))
-			Error(w, "InvalidRange", "The requested range is not satisfiable", makeKey(r), http.StatusRequestedRangeNotSatisfiable)
+		if httpRange != nil {
+			// Whether a range is satisfiable can't always be decided
+			// from object.Size alone: the gs backend serves
+			// gzip-transcoded objects whose on-the-wire length differs
+			// from the stored size it reports in ObjectInfo. Peek at
+			// the body instead — an empty reader means "past end"
+			// regardless of what Size says, and a non-empty reader
+			// means we have data to stream even if the arithmetic on
+			// object.Size said otherwise.
+			buf := bufio.NewReader(reader)
+			if _, err := buf.Peek(1); errors.Is(err, io.EOF) {
+				// Mirror real S3 with 416 + "bytes */size".
+				w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", object.Size))
+				Error(w, "InvalidRange", "The requested range is not satisfiable", makeKey(r), http.StatusRequestedRangeNotSatisfiable)
+				return
+			} else if err != nil {
+				writeError(w, err)
+				return
+			}
+			header := w.Header()
+			setObject(header, object)
+			setContentLength(header, httpRange.ContentLength(object.Size))
+			setContentRange(header, httpRange.ContentRange(object.Size))
+			w.WriteHeader(http.StatusPartialContent)
+			io.Copy(w, buf)
 			return
 		}
 
 		header := w.Header()
 		setObject(header, object)
-
-		if httpRange != nil {
-			setContentLength(header, httpRange.ContentLength(object.Size))
-			setContentRange(header, httpRange.ContentRange(object.Size))
-			w.WriteHeader(http.StatusPartialContent)
-		}
-
 		io.Copy(w, reader)
 	}
 }
