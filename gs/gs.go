@@ -546,23 +546,9 @@ func (b *Bucket) PresignGetObject(ctx context.Context, key string, expiration ti
 		return "", storage.ErrInvalidObjectKey
 	}
 
-	getOptions := storage.NewGetOptions(options...)
-	opts := &gcloud.SignedURLOptions{
-		Scheme:  gcloud.SigningSchemeV4,
-		Method:  "GET",
-		Expires: time.Now().Add(expiration),
-	}
-
-	// Add range header if specified
-	if start, end, ok := getOptions.BytesRange(); ok {
-		if err := storage.ValidObjectRange(key, start, end); err != nil {
-			return "", err
-		}
-		header := "Range:bytes=" + strconv.FormatInt(start, 10) + "-"
-		if end >= 0 {
-			header += strconv.FormatInt(end, 10)
-		}
-		opts.Headers = append(opts.Headers, header)
+	opts, err := signedGetOptions(key, expiration, options...)
+	if err != nil {
+		return "", err
 	}
 
 	url, err := b.client.Bucket(b.bucket).SignedURL(key, opts)
@@ -570,6 +556,32 @@ func (b *Bucket) PresignGetObject(ctx context.Context, key string, expiration ti
 		return "", makeIcebergError(err)
 	}
 	return url, nil
+}
+
+// signedGetOptions builds the gcloud.SignedURLOptions for a GET
+// presigned URL. It commits the client to sending Accept-Encoding:
+// gzip so GCS returns gzip-encoded objects as-stored rather than
+// decompressing them on the fly — matching the ReadCompressed(true)
+// behaviour of the direct GetObject path.
+func signedGetOptions(key string, expiration time.Duration, options ...storage.GetOption) (*gcloud.SignedURLOptions, error) {
+	opts := &gcloud.SignedURLOptions{
+		Scheme:  gcloud.SigningSchemeV4,
+		Method:  "GET",
+		Expires: time.Now().Add(expiration),
+		Headers: []string{"Accept-Encoding:gzip"},
+	}
+	getOptions := storage.NewGetOptions(options...)
+	if start, end, ok := getOptions.BytesRange(); ok {
+		if err := storage.ValidObjectRange(key, start, end); err != nil {
+			return nil, err
+		}
+		header := "Range:bytes=" + strconv.FormatInt(start, 10) + "-"
+		if end >= 0 {
+			header += strconv.FormatInt(end, 10)
+		}
+		opts.Headers = append(opts.Headers, header)
+	}
+	return opts, nil
 }
 
 func (b *Bucket) PresignPutObject(ctx context.Context, key string, expiration time.Duration, options ...storage.PutOption) (string, error) {
