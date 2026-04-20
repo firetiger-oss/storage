@@ -334,7 +334,10 @@ func (b *cachedBucket) GetObject(ctx context.Context, key string, options ...sto
 			effEnd = cachedInfo.Size - 1
 		}
 		if start >= cachedInfo.Size {
-			body = emptyBodyClosing(cachedFile)
+			if err := seekToEnd(cachedFile); err != nil {
+				return nil, cachedInfo, err
+			}
+			body = cachedFile
 		} else {
 			body = bytesRangeReadCloser(cachedFile, start, effEnd)
 		}
@@ -451,7 +454,10 @@ func (b *cachedBucket) getObjectFromBucket(ctx context.Context, key, filePath st
 			effEnd = fileSize - 1
 		}
 		if start >= fileSize {
-			body = emptyBodyClosing(f)
+			if err := seekToEnd(f); err != nil {
+				return nil, info, err
+			}
+			body = f
 		} else {
 			body = bytesRangeReadCloser(f, start, effEnd)
 		}
