@@ -372,22 +372,28 @@ func (b *cachedBucket) getObjectFromBucket(ctx context.Context, key, filePath st
 	}
 	if err != nil {
 		if hasBytesRange {
-			effEnd := end
-			if effEnd < 0 {
-				effEnd = info.Size - 1
-			}
 			io.CopyN(io.Discard, body, start)
-			limit := effEnd - start + 1
-			if limit < 0 {
-				limit = 0
+			if end >= 0 {
+				// Closed range: cap to end-start+1. info.Size is not
+				// used here because, for backends like transcoded gs,
+				// it can be smaller than the actual body length and
+				// would truncate the slice the caller asked for.
+				limit := end - start + 1
+				if limit < 0 {
+					limit = 0
+				}
+				body = &struct {
+					io.LimitedReader
+					io.Closer
+				}{
+					LimitedReader: io.LimitedReader{R: body, N: limit},
+					Closer:        body,
+				}
 			}
-			body = &struct {
-				io.LimitedReader
-				io.Closer
-			}{
-				LimitedReader: io.LimitedReader{R: body, N: limit},
-				Closer:        body,
-			}
+			// For open-ended ranges (end < 0) stream the tail to EOF
+			// without wrapping in a LimitedReader — we don't know the
+			// true body length and clamping via info.Size would
+			// truncate transcoded tails.
 		}
 		return body, info, nil
 	}
