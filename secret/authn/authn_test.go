@@ -558,3 +558,86 @@ func (a challengeAuthenticator) Challenge(req *http.Request) Challenge {
 		Params: map[string]string{"realm": req.Host},
 	}
 }
+
+// bareAuthenticator implements only Authenticator (no Challenge method). It
+// exists to guard source-compatibility: downstream code with custom
+// authenticators that predate Challenger must still compile and run
+// unchanged — a feature-detection type assertion on Challenger must be
+// optional.
+type bareAuthenticator struct{}
+
+func (bareAuthenticator) Authenticate(context.Context, *http.Request) (context.Context, error) {
+	return nil, ErrNotFound
+}
+
+func TestNewHandlerCustomAuthenticatorWithoutChallenge(t *testing.T) {
+	// Compile-time assertion: bareAuthenticator satisfies Authenticator
+	// without implementing Challenger. This would fail to compile if
+	// Challenge were a mandatory method on Authenticator.
+	var _ Authenticator = bareAuthenticator{}
+	if _, ok := any(bareAuthenticator{}).(Challenger); ok {
+		t.Fatal("bareAuthenticator unexpectedly satisfies Challenger")
+	}
+
+	handler := NewHandler(
+		http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+			t.Error("next handler should not be called")
+		}),
+		bareAuthenticator{},
+	)
+
+	req := httptest.NewRequest("GET", "http://example.com/resource", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", rec.Code)
+	}
+	if got := rec.Header().Get("WWW-Authenticate"); got != "" {
+		t.Errorf("expected no WWW-Authenticate header, got %q", got)
+	}
+}
+
+// bareScheme implements only Scheme[C] (no Challenge method). It exists to
+// guard source-compatibility: downstream code with custom schemes that
+// predate Challenger must still satisfy Scheme[C] and work with
+// NewAuthenticator — particularly for outbound-only uses via
+// NewAuthForwarder / NewAuthTransport.
+type bareScheme struct{}
+
+func (bareScheme) Extract(*http.Request) (string, string, bool) { return "", "", false }
+func (bareScheme) Verify(string, string) bool                   { return false }
+func (bareScheme) Inject(*http.Request, string)                 {}
+
+func TestNewAuthenticatorCustomSchemeWithoutChallenge(t *testing.T) {
+	// Compile-time assertion: bareScheme satisfies Scheme[string] without
+	// a Challenge method. This would fail to compile if Challenge were
+	// mandatory on Scheme[C].
+	var _ Scheme[string] = bareScheme{}
+	if _, ok := any(bareScheme{}).(Challenger); ok {
+		t.Fatal("bareScheme unexpectedly satisfies Challenger")
+	}
+
+	auth := NewAuthenticator(
+		LoaderFunc[string](func(context.Context, string) (string, error) { return "", nil }),
+		bareScheme{},
+	)
+
+	handler := NewHandler(
+		http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+			t.Error("next handler should not be called")
+		}),
+		auth,
+	)
+
+	req := httptest.NewRequest("GET", "http://example.com/resource", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", rec.Code)
+	}
+	if got := rec.Header().Get("WWW-Authenticate"); got != "" {
+		t.Errorf("expected no WWW-Authenticate header, got %q", got)
+	}
+}

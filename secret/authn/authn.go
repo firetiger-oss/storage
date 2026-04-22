@@ -29,11 +29,6 @@ var ErrNotFound = errors.New("credentials not found")
 // This design allows composing multiple authentication schemes.
 type Authenticator interface {
 	Authenticate(ctx context.Context, req *http.Request) (context.Context, error)
-
-	// Challenge returns the WWW-Authenticate challenge this authenticator
-	// contributes when a request is rejected with 401. Return the zero
-	// value to contribute no challenge (e.g. signed-URL authentication).
-	Challenge(req *http.Request) Challenge
 }
 
 // AuthenticatorFunc is a function adapter for Authenticator.
@@ -44,10 +39,16 @@ func (f AuthenticatorFunc) Authenticate(ctx context.Context, req *http.Request) 
 	return f(ctx, req)
 }
 
-// Challenge implements Authenticator by contributing no challenge.
-// Callers that need to contribute a WWW-Authenticate challenge should build
-// an authenticator through NewAuthenticator with a Scheme implementation.
-func (f AuthenticatorFunc) Challenge(*http.Request) Challenge { return Challenge{} }
+// Challenger is an optional interface Authenticators may implement to
+// contribute a WWW-Authenticate challenge on 401 responses. NewHandler
+// detects this interface on each registered authenticator and joins the
+// non-zero challenges into the WWW-Authenticate header.
+//
+// Wrappers that adapt an Authenticator should forward Challenger when the
+// wrapped value implements it, otherwise the challenge will be lost.
+type Challenger interface {
+	Challenge(req *http.Request) Challenge
+}
 
 // Challenge is a single WWW-Authenticate challenge entry (RFC 7235).
 //
@@ -195,8 +196,12 @@ func NewHandler(next http.Handler, authenticators ...Authenticator) http.Handler
 func writeUnauthorizedError(w http.ResponseWriter, r *http.Request, authenticators []Authenticator) {
 	var parts []string
 	for _, auth := range authenticators {
-		if c := auth.Challenge(r); !c.IsZero() {
-			parts = append(parts, c.String())
+		c, ok := auth.(Challenger)
+		if !ok {
+			continue
+		}
+		if ch := c.Challenge(r); !ch.IsZero() {
+			parts = append(parts, ch.String())
 		}
 	}
 	if len(parts) > 0 {

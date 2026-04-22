@@ -16,6 +16,9 @@ import (
 // Scheme defines an HTTP authentication scheme (Bearer, Basic, etc.).
 // Implementations handle extracting credentials from requests and injecting
 // them into outbound requests.
+//
+// Schemes may optionally implement Challenger to contribute a
+// WWW-Authenticate challenge on 401 responses; see NewAuthenticator.
 type Scheme[C any] interface {
 	// Extract extracts the identifier and secret from an incoming request.
 	// Returns (identifier, secret, true) if auth header present and valid format.
@@ -27,15 +30,15 @@ type Scheme[C any] interface {
 
 	// Inject adds authentication to an outbound request.
 	Inject(req *http.Request, credential C)
-
-	// Challenge returns the WWW-Authenticate challenge for this scheme,
-	// used when a request is rejected with 401.
-	Challenge(req *http.Request) Challenge
 }
 
 // NewAuthenticator returns an Authenticator using the given scheme.
 // C must be loadable via the provided Loader.
 // On success, injects credential into context via ContextWithCredential[C].
+//
+// If the scheme also implements Challenger, the returned Authenticator
+// implements Challenger by delegating to the scheme; otherwise the
+// Authenticator contributes no WWW-Authenticate challenge.
 func NewAuthenticator[C any, S Scheme[C]](loader Loader[C], scheme S) Authenticator {
 	return &schemeAuthenticator[C, S]{loader: loader, scheme: scheme}
 }
@@ -67,8 +70,15 @@ func (a *schemeAuthenticator[C, S]) Authenticate(ctx context.Context, req *http.
 	return ContextWithCredential(ctx, domain, credential), nil
 }
 
+// Challenge implements Challenger by delegating to the scheme's own
+// Challenge method if the scheme implements Challenger. Otherwise returns
+// the zero Challenge so the authenticator contributes nothing to the
+// WWW-Authenticate header.
 func (a *schemeAuthenticator[C, S]) Challenge(req *http.Request) Challenge {
-	return a.scheme.Challenge(req)
+	if c, ok := any(a.scheme).(Challenger); ok {
+		return c.Challenge(req)
+	}
+	return Challenge{}
 }
 
 // NewAuthForwarder returns an http.RoundTripper that injects credentials
