@@ -11,7 +11,7 @@ import (
 
 	"github.com/achille-roussel/kway-go"
 	"github.com/firetiger-oss/concurrent"
-	"github.com/firetiger-oss/storage/internal/sequtil"
+	"github.com/firetiger-oss/tigerblock/internal/sequtil"
 )
 
 // Merge creates a bucket that merges multiple buckets according to specific rules:

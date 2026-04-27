@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/firetiger-oss/storage/uri"
+	"github.com/firetiger-oss/tigerblock/uri"
 )
 
 func isExpectedError(err error) bool {

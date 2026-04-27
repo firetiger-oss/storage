@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/firetiger-oss/storage"
-	"github.com/firetiger-oss/storage/file"
-	storagetest "github.com/firetiger-oss/storage/test"
+	"github.com/firetiger-oss/tigerblock"
+	"github.com/firetiger-oss/tigerblock/file"
+	storagetest "github.com/firetiger-oss/tigerblock/test"
 )
 
 func TestFileStorage(t *testing.T) {

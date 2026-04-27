@@ -3,9 +3,9 @@ package secret_test
 import (
 	"testing"
 
-	"github.com/firetiger-oss/storage/memory"
-	"github.com/firetiger-oss/storage/secret"
-	"github.com/firetiger-oss/storage/test"
+	"github.com/firetiger-oss/tigerblock/memory"
+	"github.com/firetiger-oss/tigerblock/secret"
+	"github.com/firetiger-oss/tigerblock/test"
 )
 
 func TestManager(t *testing.T) {

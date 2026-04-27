@@ -7,9 +7,9 @@ package bucket
 import (
 	"context"
 
-	"github.com/firetiger-oss/storage"
-	"github.com/firetiger-oss/storage/secret"
-	"github.com/firetiger-oss/storage/uri"
+	"github.com/firetiger-oss/tigerblock"
+	"github.com/firetiger-oss/tigerblock/secret"
+	"github.com/firetiger-oss/tigerblock/uri"
 )
 
 // Registry implements secret.Registry for storage bucket-backed secret managers.

@@ -9,8 +9,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/firetiger-oss/storage"
-	"github.com/firetiger-oss/storage/uri"
+	"github.com/firetiger-oss/tigerblock"
+	"github.com/firetiger-oss/tigerblock/uri"
 )
 
 // NewObjectHandler creates an ObjectHandler that dispatches events to the given

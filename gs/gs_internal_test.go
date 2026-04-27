@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	gcloud "cloud.google.com/go/storage"
-	"github.com/firetiger-oss/storage"
+	"github.com/firetiger-oss/tigerblock"
 	"google.golang.org/api/googleapi"
 )
 

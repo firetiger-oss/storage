@@ -4,7 +4,7 @@ import (
 	"io/fs"
 	"testing"
 
-	storage "github.com/firetiger-oss/storage"
+	storage "github.com/firetiger-oss/tigerblock"
 )
 
 func TestReadModeRoundTrip(t *testing.T) {

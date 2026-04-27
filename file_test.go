@@ -10,8 +10,8 @@ import (
 	"testing/fstest"
 	"testing/iotest"
 
-	"github.com/firetiger-oss/storage"
-	"github.com/firetiger-oss/storage/memory"
+	"github.com/firetiger-oss/tigerblock"
+	"github.com/firetiger-oss/tigerblock/memory"
 )
 
 type prefixFS struct {

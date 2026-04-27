@@ -20,8 +20,8 @@ import (
 	gofs "github.com/hanwen/go-fuse/v2/fs"
 	gofuse "github.com/hanwen/go-fuse/v2/fuse"
 
-	storage "github.com/firetiger-oss/storage"
-	"github.com/firetiger-oss/storage/uri"
+	storage "github.com/firetiger-oss/tigerblock"
+	"github.com/firetiger-oss/tigerblock/uri"
 )
 
 // MountConfig is the resolved configuration built up by MountOption values

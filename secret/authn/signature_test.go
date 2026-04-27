@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/firetiger-oss/storage/secret"
+	"github.com/firetiger-oss/tigerblock/secret"
 )
 
 type mockStore struct {

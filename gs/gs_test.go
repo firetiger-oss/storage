@@ -8,10 +8,10 @@ import (
 	"testing"
 
 	gcloud "cloud.google.com/go/storage"
-	"github.com/firetiger-oss/storage"
-	"github.com/firetiger-oss/storage/gs"
-	"github.com/firetiger-oss/storage/gs/gsclient"
-	storagetest "github.com/firetiger-oss/storage/test"
+	"github.com/firetiger-oss/tigerblock"
+	"github.com/firetiger-oss/tigerblock/gs"
+	"github.com/firetiger-oss/tigerblock/gs/gsclient"
+	storagetest "github.com/firetiger-oss/tigerblock/test"
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 )
 

@@ -8,16 +8,16 @@
 //
 // Example usage:
 //
-//	import _ "github.com/firetiger-oss/storage/secret/http"
+//	import _ "github.com/firetiger-oss/tigerblock/secret/http"
 //
 //	value, info, err := secret.Get(ctx, "https://secrets.example.com/database-password")
 package http
 
 import (
-	"github.com/firetiger-oss/storage/secret"
-	"github.com/firetiger-oss/storage/secret/bucket"
+	"github.com/firetiger-oss/tigerblock/secret"
+	"github.com/firetiger-oss/tigerblock/secret/bucket"
 
-	_ "github.com/firetiger-oss/storage/http" // register http storage backend
+	_ "github.com/firetiger-oss/tigerblock/http" // register http storage backend
 )
 
 func init() {

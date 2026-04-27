@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/firetiger-oss/storage"
-	"github.com/firetiger-oss/storage/file"
+	"github.com/firetiger-oss/tigerblock"
+	"github.com/firetiger-oss/tigerblock/file"
 	"golang.org/x/sys/unix"
 )
 

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/firetiger-oss/storage/uri"
+	"github.com/firetiger-oss/tigerblock/uri"
 )
 
 // Named constants for unix permission bits.

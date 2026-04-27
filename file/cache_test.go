@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/firetiger-oss/storage"
-	"github.com/firetiger-oss/storage/test"
+	"github.com/firetiger-oss/tigerblock"
+	"github.com/firetiger-oss/tigerblock/test"
 )
 
 func TestCacheWithLimit(t *testing.T) {

@@ -3,7 +3,7 @@ package uri_test
 import (
 	"testing"
 
-	"github.com/firetiger-oss/storage/uri"
+	"github.com/firetiger-oss/tigerblock/uri"
 )
 
 func TestSplit(t *testing.T) {

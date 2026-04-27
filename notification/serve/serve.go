@@ -10,10 +10,10 @@ import (
 
 	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/aws/aws-lambda-go/lambdacontext"
-	"github.com/firetiger-oss/storage/notification"
-	"github.com/firetiger-oss/storage/notification/aws"
-	"github.com/firetiger-oss/storage/notification/cloudflare"
-	"github.com/firetiger-oss/storage/notification/gcp"
+	"github.com/firetiger-oss/tigerblock/notification"
+	"github.com/firetiger-oss/tigerblock/notification/aws"
+	"github.com/firetiger-oss/tigerblock/notification/cloudflare"
+	"github.com/firetiger-oss/tigerblock/notification/gcp"
 )
 
 // Serve starts a notification handler that auto-detects the runtime environment.

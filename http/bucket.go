@@ -18,12 +18,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/firetiger-oss/storage"
-	"github.com/firetiger-oss/storage/internal/sequtil"
-	"github.com/firetiger-oss/storage/secret"
-	basicauth "github.com/firetiger-oss/storage/secret/authn/basic"
-	bearerauth "github.com/firetiger-oss/storage/secret/authn/bearer"
-	"github.com/firetiger-oss/storage/uri"
+	"github.com/firetiger-oss/tigerblock"
+	"github.com/firetiger-oss/tigerblock/internal/sequtil"
+	"github.com/firetiger-oss/tigerblock/secret"
+	basicauth "github.com/firetiger-oss/tigerblock/secret/authn/basic"
+	bearerauth "github.com/firetiger-oss/tigerblock/secret/authn/bearer"
+	"github.com/firetiger-oss/tigerblock/uri"
 )
 
 func init() {

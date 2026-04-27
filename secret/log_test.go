@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/firetiger-oss/storage/memory"
-	"github.com/firetiger-oss/storage/secret"
+	"github.com/firetiger-oss/tigerblock/memory"
+	"github.com/firetiger-oss/tigerblock/secret"
 )
 
 func TestWithLogger(t *testing.T) {

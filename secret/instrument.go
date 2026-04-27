@@ -10,7 +10,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-const instrumentationName = "github.com/firetiger-oss/storage/secret"
+const instrumentationName = "github.com/firetiger-oss/tigerblock/secret"
 
 // Instrument wraps a Manager with OpenTelemetry instrumentation.
 // All operations create spans with relevant attributes.

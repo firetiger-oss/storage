@@ -4,7 +4,7 @@ import (
 	"context"
 	"strings"
 
-	"github.com/firetiger-oss/storage/secret"
+	"github.com/firetiger-oss/tigerblock/secret"
 )
 
 type registry struct{}

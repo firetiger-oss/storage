@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/firetiger-oss/storage/uri"
+	"github.com/firetiger-oss/tigerblock/uri"
 )
 
 func WithPrefix(prefix string) Adapter {

@@ -14,9 +14,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/firetiger-oss/storage"
-	"github.com/firetiger-oss/storage/internal/sequtil"
-	"github.com/firetiger-oss/storage/uri"
+	"github.com/firetiger-oss/tigerblock"
+	"github.com/firetiger-oss/tigerblock/internal/sequtil"
+	"github.com/firetiger-oss/tigerblock/uri"
 )
 
 type HandlerOptions struct {

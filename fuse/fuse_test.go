@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	storage "github.com/firetiger-oss/storage"
-	storagefuse "github.com/firetiger-oss/storage/fuse"
-	"github.com/firetiger-oss/storage/memory"
+	storage "github.com/firetiger-oss/tigerblock"
+	storagefuse "github.com/firetiger-oss/tigerblock/fuse"
+	"github.com/firetiger-oss/tigerblock/memory"
 )
 
 // errorBucket wraps a storage.Bucket and injects configurable errors on

@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/firetiger-oss/storage/notification"
-	"github.com/firetiger-oss/storage/uri"
+	"github.com/firetiger-oss/tigerblock/notification"
+	"github.com/firetiger-oss/tigerblock/uri"
 )
 
 // EventBridgeEvent represents an AWS EventBridge event envelope.

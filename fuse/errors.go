@@ -6,7 +6,7 @@ import (
 
 	gofs "github.com/hanwen/go-fuse/v2/fs"
 
-	storage "github.com/firetiger-oss/storage"
+	storage "github.com/firetiger-oss/tigerblock"
 )
 
 func makeErrno(err error) syscall.Errno {

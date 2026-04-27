@@ -4,7 +4,7 @@ import (
 	"io/fs"
 	"strconv"
 
-	storage "github.com/firetiger-oss/storage"
+	storage "github.com/firetiger-oss/tigerblock"
 )
 
 // Metadata keys used to persist POSIX permissions on objects. The same names

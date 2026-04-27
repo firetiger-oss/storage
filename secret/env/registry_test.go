@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/firetiger-oss/storage/secret"
+	"github.com/firetiger-oss/tigerblock/secret"
 )
 
 func TestRegistry(t *testing.T) {

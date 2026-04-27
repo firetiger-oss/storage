@@ -7,8 +7,8 @@ import (
 	"syscall"
 	"testing"
 
-	storage "github.com/firetiger-oss/storage"
-	storagefuse "github.com/firetiger-oss/storage/fuse"
+	storage "github.com/firetiger-oss/tigerblock"
+	storagefuse "github.com/firetiger-oss/tigerblock/fuse"
 )
 
 // mountBucketWithOpts mounts bucket using the provided MountOptions. Returns

@@ -6,7 +6,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/firetiger-oss/storage/uri"
+	"github.com/firetiger-oss/tigerblock/uri"
 )
 
 // Filter examines an event and returns whether to continue processing.

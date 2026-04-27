@@ -19,10 +19,10 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
-	"github.com/firetiger-oss/storage"
-	storages3 "github.com/firetiger-oss/storage/s3"
-	"github.com/firetiger-oss/storage/s3/fakes3"
-	storagetest "github.com/firetiger-oss/storage/test"
+	"github.com/firetiger-oss/tigerblock"
+	storages3 "github.com/firetiger-oss/tigerblock/s3"
+	"github.com/firetiger-oss/tigerblock/s3/fakes3"
+	storagetest "github.com/firetiger-oss/tigerblock/test"
 )
 
 // TestS3GetObjectTranslates416 verifies that a 416 Range Not Satisfiable

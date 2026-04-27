@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/firetiger-oss/storage/secret"
+	"github.com/firetiger-oss/tigerblock/secret"
 )
 
 // TestManager runs a comprehensive test suite against a secret manager implementation.

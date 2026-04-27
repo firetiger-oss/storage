@@ -22,12 +22,12 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
-	"github.com/firetiger-oss/storage"
-	"github.com/firetiger-oss/storage/backoff"
-	"github.com/firetiger-oss/storage/cache"
-	storagehttp "github.com/firetiger-oss/storage/http"
-	"github.com/firetiger-oss/storage/internal/sequtil"
-	"github.com/firetiger-oss/storage/uri"
+	"github.com/firetiger-oss/tigerblock"
+	"github.com/firetiger-oss/tigerblock/backoff"
+	"github.com/firetiger-oss/tigerblock/cache"
+	storagehttp "github.com/firetiger-oss/tigerblock/http"
+	"github.com/firetiger-oss/tigerblock/internal/sequtil"
+	"github.com/firetiger-oss/tigerblock/uri"
 )
 
 func init() {

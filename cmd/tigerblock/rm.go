@@ -7,7 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/firetiger-oss/storage"
+	"github.com/firetiger-oss/tigerblock"
 )
 
 var rmCmd = &cobra.Command{

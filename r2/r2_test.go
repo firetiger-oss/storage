@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/firetiger-oss/storage"
+	"github.com/firetiger-oss/tigerblock"
 )
 
 func TestBucketLocation(t *testing.T) {

@@ -6,7 +6,7 @@ import (
 	"iter"
 	"time"
 
-	"github.com/firetiger-oss/storage/internal/oteltrace"
+	"github.com/firetiger-oss/tigerblock/internal/oteltrace"
 	"go.opentelemetry.io/otel/attribute"
 )
 

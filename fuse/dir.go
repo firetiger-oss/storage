@@ -10,7 +10,7 @@ import (
 	gofs "github.com/hanwen/go-fuse/v2/fs"
 	gofuse "github.com/hanwen/go-fuse/v2/fuse"
 
-	storage "github.com/firetiger-oss/storage"
+	storage "github.com/firetiger-oss/tigerblock"
 )
 
 // dirNode represents a directory in the bucket, backed by a key prefix.

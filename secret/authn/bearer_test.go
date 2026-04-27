@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/firetiger-oss/storage/secret"
+	"github.com/firetiger-oss/tigerblock/secret"
 )
 
 type testBearerCredential struct {

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/firetiger-oss/storage"
+	"github.com/firetiger-oss/tigerblock"
 )
 
 // NewManager creates a new secret.Manager backed by a storage.Bucket.

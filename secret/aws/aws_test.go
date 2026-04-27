@@ -9,8 +9,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager/types"
-	"github.com/firetiger-oss/storage/secret"
-	"github.com/firetiger-oss/storage/test"
+	"github.com/firetiger-oss/tigerblock/secret"
+	"github.com/firetiger-oss/tigerblock/test"
 )
 
 // mockClient implements Client for testing
