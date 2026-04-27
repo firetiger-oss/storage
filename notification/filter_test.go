@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/firetiger-oss/storage"
-	"github.com/firetiger-oss/storage/memory"
-	"github.com/firetiger-oss/storage/notification"
-	"github.com/firetiger-oss/storage/uri"
+	"github.com/firetiger-oss/tigerblock"
+	"github.com/firetiger-oss/tigerblock/memory"
+	"github.com/firetiger-oss/tigerblock/notification"
+	"github.com/firetiger-oss/tigerblock/uri"
 )
 
 func TestFilterPrefix(t *testing.T) {

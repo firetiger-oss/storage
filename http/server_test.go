@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/firetiger-oss/storage"
+	"github.com/firetiger-oss/tigerblock"
 )
 
 func TestParseBytesRange(t *testing.T) {

@@ -14,7 +14,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/firetiger-oss/storage/secret"
+	"github.com/firetiger-oss/tigerblock/secret"
 )
 
 // ErrUnauthorized is returned when authentication fails.

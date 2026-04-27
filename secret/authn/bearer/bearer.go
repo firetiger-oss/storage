@@ -3,7 +3,7 @@ package bearer
 import (
 	"net/http"
 
-	"github.com/firetiger-oss/storage/secret/authn"
+	"github.com/firetiger-oss/tigerblock/secret/authn"
 )
 
 // NewTransport returns an http.RoundTripper that injects a static Bearer token

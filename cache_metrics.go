@@ -11,7 +11,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 )
 
-const instrumentationName = "github.com/firetiger-oss/storage"
+const instrumentationName = "github.com/firetiger-oss/tigerblock"
 
 type cacheMetrics struct {
 	sizeBytes  metric.Int64ObservableGauge

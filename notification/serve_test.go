@@ -11,12 +11,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/firetiger-oss/storage"
-	"github.com/firetiger-oss/storage/memory"
-	"github.com/firetiger-oss/storage/notification"
-	_ "github.com/firetiger-oss/storage/notification/aws"
-	_ "github.com/firetiger-oss/storage/notification/cloudflare"
-	_ "github.com/firetiger-oss/storage/notification/gcp"
+	"github.com/firetiger-oss/tigerblock"
+	"github.com/firetiger-oss/tigerblock/memory"
+	"github.com/firetiger-oss/tigerblock/notification"
+	_ "github.com/firetiger-oss/tigerblock/notification/aws"
+	_ "github.com/firetiger-oss/tigerblock/notification/cloudflare"
+	_ "github.com/firetiger-oss/tigerblock/notification/gcp"
 )
 
 func TestServeHTTPModeWithRegistration(t *testing.T) {

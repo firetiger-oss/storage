@@ -12,17 +12,17 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/firetiger-oss/storage/uri"
+	"github.com/firetiger-oss/tigerblock/uri"
 
 	// Import storage backends for side effects
-	_ "github.com/firetiger-oss/storage/file"
-	_ "github.com/firetiger-oss/storage/gs"
-	_ "github.com/firetiger-oss/storage/http"
-	_ "github.com/firetiger-oss/storage/memory"
-	_ "github.com/firetiger-oss/storage/s3"
+	_ "github.com/firetiger-oss/tigerblock/file"
+	_ "github.com/firetiger-oss/tigerblock/gs"
+	_ "github.com/firetiger-oss/tigerblock/http"
+	_ "github.com/firetiger-oss/tigerblock/memory"
+	_ "github.com/firetiger-oss/tigerblock/s3"
 
-	basicauth "github.com/firetiger-oss/storage/secret/authn/basic"
-	bearerauth "github.com/firetiger-oss/storage/secret/authn/bearer"
+	basicauth "github.com/firetiger-oss/tigerblock/secret/authn/basic"
+	bearerauth "github.com/firetiger-oss/tigerblock/secret/authn/bearer"
 )
 
 var rootCmd = &cobra.Command{

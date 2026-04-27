@@ -3,7 +3,7 @@ package gcp
 import (
 	"fmt"
 
-	"github.com/firetiger-oss/storage/secret"
+	"github.com/firetiger-oss/tigerblock/secret"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )

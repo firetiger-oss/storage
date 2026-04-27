@@ -5,16 +5,16 @@
 //
 // Example usage:
 //
-//	import _ "github.com/firetiger-oss/storage/secret/s3"
+//	import _ "github.com/firetiger-oss/tigerblock/secret/s3"
 //
 //	value, info, err := secret.Get(ctx, "s3://my-secrets-bucket/database-password")
 package s3
 
 import (
-	"github.com/firetiger-oss/storage/secret"
-	"github.com/firetiger-oss/storage/secret/bucket"
+	"github.com/firetiger-oss/tigerblock/secret"
+	"github.com/firetiger-oss/tigerblock/secret/bucket"
 
-	_ "github.com/firetiger-oss/storage/s3" // register s3 storage backend
+	_ "github.com/firetiger-oss/tigerblock/s3" // register s3 storage backend
 )
 
 func init() {

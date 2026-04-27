@@ -10,11 +10,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/firetiger-oss/storage"
-	"github.com/firetiger-oss/storage/memory"
-	"github.com/firetiger-oss/storage/notification"
-	"github.com/firetiger-oss/storage/notification/aws"
-	"github.com/firetiger-oss/storage/uri"
+	"github.com/firetiger-oss/tigerblock"
+	"github.com/firetiger-oss/tigerblock/memory"
+	"github.com/firetiger-oss/tigerblock/notification"
+	"github.com/firetiger-oss/tigerblock/notification/aws"
+	"github.com/firetiger-oss/tigerblock/uri"
 )
 
 func TestS3EventHandlerObjectCreated(t *testing.T) {

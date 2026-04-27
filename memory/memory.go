@@ -16,8 +16,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/firetiger-oss/storage"
-	"github.com/firetiger-oss/storage/internal/sequtil"
+	"github.com/firetiger-oss/tigerblock"
+	"github.com/firetiger-oss/tigerblock/internal/sequtil"
 )
 
 func init() {

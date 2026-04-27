@@ -21,9 +21,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/firetiger-oss/storage"
-	"github.com/firetiger-oss/storage/backoff"
-	"github.com/firetiger-oss/storage/internal/sequtil"
+	"github.com/firetiger-oss/tigerblock"
+	"github.com/firetiger-oss/tigerblock/backoff"
+	"github.com/firetiger-oss/tigerblock/internal/sequtil"
 	"github.com/fsnotify/fsnotify"
 	"golang.org/x/sys/unix"
 )

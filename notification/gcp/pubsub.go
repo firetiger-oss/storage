@@ -10,8 +10,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/firetiger-oss/storage/notification"
-	"github.com/firetiger-oss/storage/uri"
+	"github.com/firetiger-oss/tigerblock/notification"
+	"github.com/firetiger-oss/tigerblock/uri"
 )
 
 // PubSubPushRequest represents a Pub/Sub push delivery request.

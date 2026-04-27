@@ -1,4 +1,4 @@
-module github.com/firetiger-oss/storage
+module github.com/firetiger-oss/tigerblock
 
 go 1.25
 

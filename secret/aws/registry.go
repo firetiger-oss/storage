@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/firetiger-oss/storage/secret"
+	"github.com/firetiger-oss/tigerblock/secret"
 )
 
 // Parses: arn:PARTITION:secretsmanager:REGION:ACCOUNT[:secret:NAME[-SUFFIX][:STAGE]]

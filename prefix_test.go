@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	storage "github.com/firetiger-oss/storage"
-	"github.com/firetiger-oss/storage/memory"
+	storage "github.com/firetiger-oss/tigerblock"
+	"github.com/firetiger-oss/tigerblock/memory"
 )
 
 // TestPrefixedBucketValidatesUserKey guards against a regression in which the

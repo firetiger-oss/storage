@@ -5,7 +5,7 @@
 //
 // Usage:
 //
-//	import _ "github.com/firetiger-oss/storage/r2"
+//	import _ "github.com/firetiger-oss/tigerblock/r2"
 //
 //	// Set credentials (R2 uses S3-compatible credentials)
 //	// AWS_ACCESS_KEY_ID=<r2-access-key>
@@ -27,10 +27,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/firetiger-oss/storage"
-	storagehttp "github.com/firetiger-oss/storage/http"
-	"github.com/firetiger-oss/storage/secret/authn/sigv4"
-	"github.com/firetiger-oss/storage/uri"
+	"github.com/firetiger-oss/tigerblock"
+	storagehttp "github.com/firetiger-oss/tigerblock/http"
+	"github.com/firetiger-oss/tigerblock/secret/authn/sigv4"
+	"github.com/firetiger-oss/tigerblock/uri"
 )
 
 func init() {

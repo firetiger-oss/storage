@@ -3,7 +3,7 @@ package aws
 import (
 	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/aws/aws-lambda-go/lambdacontext"
-	"github.com/firetiger-oss/storage/notification"
+	"github.com/firetiger-oss/tigerblock/notification"
 )
 
 func init() {

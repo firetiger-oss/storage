@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"cloud.google.com/go/secretmanager/apiv1/secretmanagerpb"
-	"github.com/firetiger-oss/storage/secret"
-	"github.com/firetiger-oss/storage/test"
+	"github.com/firetiger-oss/tigerblock/secret"
+	"github.com/firetiger-oss/tigerblock/test"
 	gax "github.com/googleapis/gax-go/v2"
 	"google.golang.org/api/iterator"
 	"google.golang.org/grpc/codes"

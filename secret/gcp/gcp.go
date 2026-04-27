@@ -7,7 +7,7 @@ import (
 
 	secretmanager "cloud.google.com/go/secretmanager/apiv1"
 	"cloud.google.com/go/secretmanager/apiv1/secretmanagerpb"
-	"github.com/firetiger-oss/storage/secret"
+	"github.com/firetiger-oss/tigerblock/secret"
 	gax "github.com/googleapis/gax-go/v2"
 	"google.golang.org/api/iterator"
 )

@@ -5,10 +5,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/firetiger-oss/storage"
-	"github.com/firetiger-oss/storage/internal/sequtil"
-	"github.com/firetiger-oss/storage/memory"
-	"github.com/firetiger-oss/storage/test"
+	"github.com/firetiger-oss/tigerblock"
+	"github.com/firetiger-oss/tigerblock/internal/sequtil"
+	"github.com/firetiger-oss/tigerblock/memory"
+	"github.com/firetiger-oss/tigerblock/test"
 )
 
 func TestMountedBucket(t *testing.T) {

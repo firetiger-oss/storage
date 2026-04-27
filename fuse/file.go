@@ -11,7 +11,7 @@ import (
 	gofs "github.com/hanwen/go-fuse/v2/fs"
 	gofuse "github.com/hanwen/go-fuse/v2/fuse"
 
-	storage "github.com/firetiger-oss/storage"
+	storage "github.com/firetiger-oss/tigerblock"
 )
 
 // fileNode represents a regular file in the bucket. Its bucket is already

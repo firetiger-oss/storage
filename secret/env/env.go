@@ -20,7 +20,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/firetiger-oss/storage/secret"
+	"github.com/firetiger-oss/tigerblock/secret"
 )
 
 // validateSecretName validates that name is a simple environment variable name,

@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	storage "github.com/firetiger-oss/storage"
+	storage "github.com/firetiger-oss/tigerblock"
 )
 
 // TestReadErrorPropagation verifies that a GetObject error surfaces through

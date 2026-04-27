@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/firetiger-oss/storage"
+	"github.com/firetiger-oss/tigerblock"
 )
 
 // createSmallDisk creates a tiny disk (512KB) and returns mount path + cleanup func.

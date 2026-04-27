@@ -1,7 +1,7 @@
 package cloudflare
 
 import (
-	"github.com/firetiger-oss/storage/notification"
+	"github.com/firetiger-oss/tigerblock/notification"
 )
 
 func init() {

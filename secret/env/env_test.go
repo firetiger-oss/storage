@@ -5,8 +5,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/firetiger-oss/storage/secret"
-	"github.com/firetiger-oss/storage/test"
+	"github.com/firetiger-oss/tigerblock/secret"
+	"github.com/firetiger-oss/tigerblock/test"
 )
 
 // TestManager runs the comprehensive test suite against the env backend.

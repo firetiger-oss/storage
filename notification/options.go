@@ -4,7 +4,7 @@ import (
 	"iter"
 	"slices"
 
-	"github.com/firetiger-oss/storage"
+	"github.com/firetiger-oss/tigerblock"
 )
 
 // Option is a functional option for configuring an ObjectHandler.

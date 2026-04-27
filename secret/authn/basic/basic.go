@@ -3,7 +3,7 @@ package basic
 import (
 	"net/http"
 
-	"github.com/firetiger-oss/storage/secret/authn"
+	"github.com/firetiger-oss/tigerblock/secret/authn"
 )
 
 // NewTransport returns an http.RoundTripper that injects static Basic Auth

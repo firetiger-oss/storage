@@ -18,12 +18,12 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/firetiger-oss/storage"
-	storagefile "github.com/firetiger-oss/storage/file"
-	storagehttp "github.com/firetiger-oss/storage/http"
-	"github.com/firetiger-oss/storage/memory"
-	s3storage "github.com/firetiger-oss/storage/s3"
-	storagetest "github.com/firetiger-oss/storage/test"
+	"github.com/firetiger-oss/tigerblock"
+	storagefile "github.com/firetiger-oss/tigerblock/file"
+	storagehttp "github.com/firetiger-oss/tigerblock/http"
+	"github.com/firetiger-oss/tigerblock/memory"
+	s3storage "github.com/firetiger-oss/tigerblock/s3"
+	storagetest "github.com/firetiger-oss/tigerblock/test"
 )
 
 func TestHTTPStorage(t *testing.T) {

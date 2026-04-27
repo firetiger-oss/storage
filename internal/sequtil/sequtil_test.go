@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/firetiger-oss/storage/internal/sequtil"
+	"github.com/firetiger-oss/tigerblock/internal/sequtil"
 )
 
 func TestAll(t *testing.T) {

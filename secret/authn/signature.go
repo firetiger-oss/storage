@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/firetiger-oss/storage/secret"
+	"github.com/firetiger-oss/tigerblock/secret"
 	"golang.org/x/net/publicsuffix"
 )
 

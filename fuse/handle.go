@@ -10,7 +10,7 @@ import (
 	gofs "github.com/hanwen/go-fuse/v2/fs"
 	gofuse "github.com/hanwen/go-fuse/v2/fuse"
 
-	storage "github.com/firetiger-oss/storage"
+	storage "github.com/firetiger-oss/tigerblock"
 )
 
 // readHandle is returned for O_RDONLY opens. Each Read call issues a ranged
